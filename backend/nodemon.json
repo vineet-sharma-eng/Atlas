@@ -1,0 +1,6 @@
+{
+  "watch": ["."],
+  "ext": "js,json",
+  "legacyWatch": true,
+  "pollingInterval": 1000
+}

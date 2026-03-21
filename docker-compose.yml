@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: atlas-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: atlas
+    ports:
+      - "5432:5432"
+    volumes:
+      - atlas-db-data:/var/lib/postgresql/data
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: atlas-webui
+    restart: always
+    ports:
+      - "3001:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  backend:
+    build: ./backend
+    volumes:
+      - ./backend:/app
+    container_name: atlas-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: atlas
+      DB_PORT: 5432
+      CHOKIDAR_USEPOLLING: "true"   # 🔥 ADD THIS
+
+volumes:
+  atlas-db-data:
+  open-webui-data:
