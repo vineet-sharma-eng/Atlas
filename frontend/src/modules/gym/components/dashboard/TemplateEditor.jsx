@@ -26,31 +26,31 @@ export function TemplateEditor({
 
   if (!template) {
     return (
-      <section className="rounded-[24px] border border-dashed border-atlas-line bg-atlas-panel p-8 text-sm text-atlas-slate shadow-panel">
-        Select a template to edit its name, exercise order, visibility, and target ranges.
+      <section className="rounded-[22px] border border-dashed border-atlas-line bg-atlas-panel p-6 text-sm text-atlas-slate shadow-panel">
+        Select a template to edit its name, targets, order, and visibility.
       </section>
     );
   }
 
   return (
     <section className="space-y-4">
-      <div className="rounded-[24px] border border-atlas-line/70 bg-atlas-panel p-5 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel">
+        <div className="flex flex-col gap-3">
           <form className="flex-1" onSubmit={handleSubmit}>
             <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-atlas-slate">
+              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
                 Template name
               </span>
-              <div className="flex flex-col gap-3 md:flex-row">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_150px]">
                 <input
-                  className="w-full rounded-2xl border border-atlas-line bg-white px-4 py-3 text-base"
+                  className="w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-base text-atlas-ink"
                   type="text"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                 />
                 <button
                   type="submit"
-                  className="rounded-2xl bg-atlas-night px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+                  className="rounded-2xl bg-atlas-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
                   disabled={isSavingTemplateName}
                 >
                   {isSavingTemplateName ? 'Saving...' : 'Save name'}
@@ -61,7 +61,7 @@ export function TemplateEditor({
 
           <button
             type="button"
-            className="rounded-2xl border border-atlas-line bg-white px-4 py-3 text-sm font-medium text-atlas-ink disabled:opacity-60"
+            className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink disabled:opacity-60"
             disabled={isDuplicatingTemplate}
             onClick={() => {
               void onDuplicateTemplate();
@@ -73,7 +73,7 @@ export function TemplateEditor({
       </div>
 
       {template.exercises.length === 0 ? (
-        <div className="rounded-[24px] border border-dashed border-atlas-line bg-atlas-panel p-8 text-sm text-atlas-slate shadow-panel">
+        <div className="rounded-[22px] border border-dashed border-atlas-line bg-atlas-panel p-6 text-sm text-atlas-slate shadow-panel">
           This template does not have any exercises yet.
         </div>
       ) : (

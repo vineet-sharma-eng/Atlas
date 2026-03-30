@@ -27,22 +27,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen">
-      <div className="sticky top-0 z-10 border-b border-atlas-line/70 bg-[#f7f3ea]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+      <div className="sticky top-0 z-20 border-b border-atlas-line/80 bg-atlas-night/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-3 sm:px-4">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-atlas-slate">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-atlas-slate">
               Atlas
             </div>
-            <div className="mt-1 text-lg font-semibold text-atlas-ink">Gym module</div>
+            <div className="mt-1 text-base font-semibold text-atlas-ink sm:text-lg">Gym module</div>
           </div>
 
-          <div className="flex gap-3">
+          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-atlas-panel p-1">
             <button
               type="button"
-              className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+              className={`rounded-[14px] px-4 py-2.5 text-sm font-medium ${
                 activeView === 'workout'
-                  ? 'bg-atlas-night text-white'
-                  : 'border border-atlas-line bg-white text-atlas-ink'
+                  ? 'bg-atlas-accent text-white'
+                  : 'text-atlas-slate'
               }`}
               onClick={() => handleChangeView('workout')}
             >
@@ -50,10 +50,10 @@ export default function App() {
             </button>
             <button
               type="button"
-              className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+              className={`rounded-[14px] px-4 py-2.5 text-sm font-medium ${
                 activeView === 'dashboard'
-                  ? 'bg-atlas-night text-white'
-                  : 'border border-atlas-line bg-white text-atlas-ink'
+                  ? 'bg-atlas-accent text-white'
+                  : 'text-atlas-slate'
               }`}
               onClick={() => handleChangeView('dashboard')}
             >

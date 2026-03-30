@@ -1,75 +1,150 @@
-function NumberInput({ value, onChange, onSave, min = '0', max, step = '1', disabled }) {
+function NumericField({
+  field,
+  label,
+  value,
+  disabled,
+  step = '1',
+  min = '0',
+  max,
+  onChange,
+  onAdvance,
+  registerInput,
+}) {
   return (
-    <input
-      className="w-full min-w-24 rounded-xl border border-atlas-line bg-white px-3 py-2.5 shadow-sm disabled:bg-atlas-mist"
-      type="number"
-      inputMode="numeric"
-      min={min}
-      max={max}
-      step={step}
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          onSave();
-        }
-      }}
-    />
+    <label className="block">
+      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+        {label}
+      </span>
+      <input
+        ref={(node) => registerInput(field, node)}
+        className="w-full rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-base text-atlas-ink"
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onAdvance(field);
+          }
+        }}
+      />
+    </label>
   );
 }
 
-export function SetRow({ row, disabled, onChange, onSave }) {
+export function SetRow({
+  row,
+  disabled,
+  previousWeight,
+  timeBased,
+  registerInput,
+  onChange,
+  onAdvance,
+  onApplyWeightDelta,
+  onCopyPreviousWeight,
+  onSave,
+}) {
+  const isEditable = !disabled && !row.saved && !row.saving;
+
   return (
-    <>
-      <tr className={`${row.saved ? 'bg-white' : 'bg-atlas-accentSoft/70'} shadow-sm`}>
-        <td className="rounded-l-2xl px-4 py-3 font-semibold text-atlas-ink">{row.setNumber}</td>
-        <td className="px-4 py-3">
-          <NumberInput
-            value={row.weight}
-            step="0.5"
-            disabled={disabled || row.saved || row.saving}
-            onChange={(value) => onChange('weight', value)}
-            onSave={onSave}
-          />
-        </td>
-        <td className="px-4 py-3">
-          <NumberInput
-            value={row.reps}
-            disabled={disabled || row.saved || row.saving}
-            onChange={(value) => onChange('reps', value)}
-            onSave={onSave}
-          />
-        </td>
-        <td className="px-4 py-3">
-          <NumberInput
-            value={row.rir}
-            min="0"
-            max="4"
-            disabled={disabled || row.saved || row.saving}
-            onChange={(value) => onChange('rir', value)}
-            onSave={onSave}
-          />
-        </td>
-        <td className="rounded-r-2xl px-4 py-3">
+    <article
+      className={`rounded-[22px] border px-4 py-4 ${
+        row.saved
+          ? 'border-green-500/30 bg-green-500/10'
+          : 'border-atlas-line bg-atlas-panel'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-atlas-slate">
+            Set {row.setNumber}
+          </div>
+          <div className="mt-2 text-sm text-atlas-slate">
+            {row.saved ? 'Logged' : 'Ready to log'}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className={`rounded-2xl px-4 py-2.5 text-sm font-medium ${
+            row.saved
+              ? 'bg-green-500/15 text-green-200'
+              : 'bg-atlas-accent text-white'
+          }`}
+          onClick={onSave}
+          disabled={disabled || row.saved || row.saving}
+        >
+          {row.saved ? 'Saved' : row.saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <NumericField
+          field="weight"
+          label="Weight"
+          value={row.weight}
+          step="0.5"
+          disabled={!isEditable}
+          registerInput={registerInput}
+          onChange={(value) => onChange('weight', value)}
+          onAdvance={onAdvance}
+        />
+        <NumericField
+          field="reps"
+          label={timeBased ? 'Time' : 'Reps'}
+          value={row.reps}
+          disabled={!isEditable}
+          registerInput={registerInput}
+          onChange={(value) => onChange('reps', value)}
+          onAdvance={onAdvance}
+        />
+        <NumericField
+          field="rir"
+          label="RIR"
+          value={row.rir}
+          min="0"
+          max="4"
+          disabled={!isEditable}
+          registerInput={registerInput}
+          onChange={(value) => onChange('rir', value)}
+          onAdvance={onAdvance}
+        />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {previousWeight !== '' && previousWeight !== null && previousWeight !== undefined ? (
           <button
             type="button"
-            className="rounded-xl bg-atlas-night px-4 py-2.5 font-medium text-white transition-colors hover:bg-atlas-ink disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={onSave}
-            disabled={disabled || row.saved || row.saving}
+            className="rounded-full border border-atlas-line bg-atlas-night px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
+            disabled={!isEditable}
+            onClick={onCopyPreviousWeight}
           >
-            {row.saved ? 'Saved' : row.saving ? 'Saving...' : 'Save Set'}
+            Copy {previousWeight}
           </button>
-        </td>
-      </tr>
+        ) : null}
+        {[2.5, 5, 10].map((delta) => (
+          <button
+            key={delta}
+            type="button"
+            className="rounded-full border border-atlas-line bg-atlas-night px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
+            disabled={!isEditable}
+            onClick={() => onApplyWeightDelta(delta)}
+          >
+            +{delta}
+          </button>
+        ))}
+      </div>
+
       {row.error ? (
-        <tr>
-          <td colSpan={5} className="px-4 pt-1 text-sm text-red-700">
-            {row.error}
-          </td>
-        </tr>
+        <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm text-red-200">
+          {row.error}
+        </div>
       ) : null}
-    </>
+    </article>
   );
 }

@@ -15,35 +15,35 @@ export function GymDashboardPage() {
   const [activePanel, setActivePanel] = useState('templates');
 
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="rounded-[24px] border border-atlas-line/70 bg-atlas-panel px-5 py-5 shadow-panel">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-atlas-slate">
-            Atlas Gym
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold text-atlas-ink sm:text-4xl">
+    <main className="min-h-screen px-3 py-3 pb-10 sm:px-4">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4">
+        <header className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-atlas-slate">
             Dashboard
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-atlas-ink sm:text-3xl">
+            Templates and history
           </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-atlas-slate sm:text-base">
-            Manage template structure safely and inspect completed session history without mutating execution data.
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-atlas-slate">
+            Review session history and adjust template structure without touching completed workouts.
           </p>
         </header>
 
         {dashboard.pageError ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             {dashboard.pageError}
           </div>
         ) : null}
 
-        <div className="flex gap-3">
+        <div className="grid grid-cols-2 gap-2 rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-1">
           {DASHBOARD_PANELS.map((panel) => (
             <button
               key={panel.id}
               type="button"
-              className={`rounded-2xl px-4 py-3 text-sm font-medium ${
+              className={`rounded-[16px] px-4 py-3 text-sm font-medium ${
                 activePanel === panel.id
-                  ? 'bg-atlas-night text-white'
-                  : 'border border-atlas-line bg-atlas-panel text-atlas-ink'
+                  ? 'bg-atlas-accent text-white'
+                  : 'text-atlas-slate'
               }`}
               onClick={() => setActivePanel(panel.id)}
             >
@@ -53,7 +53,7 @@ export function GymDashboardPage() {
         </div>
 
         {activePanel === 'templates' ? (
-          <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
             <TemplateList
               templates={dashboard.templates}
               selectedTemplateId={dashboard.selectedTemplateId}
@@ -75,7 +75,7 @@ export function GymDashboardPage() {
             />
           </div>
         ) : (
-          <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
             <SessionList
               sessions={dashboard.sessions}
               selectedSessionId={dashboard.selectedSessionId}

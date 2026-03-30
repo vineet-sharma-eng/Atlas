@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SetRow } from './SetRow';
 
 function isTimeBasedExercise(notes) {
@@ -56,13 +56,46 @@ export function ExerciseAccordion({
   onAddExerciseToTemplate,
 }) {
   const [rows, setRows] = useState(() => buildRows(exercise));
+  const inputRefs = useRef(new Map());
   const timeBased = isTimeBasedExercise(exercise.notes);
   const isCompleted = exercise.status === 'completed';
   const isSkipped = exercise.status === 'skipped';
+  const isActiveExercise = isOpen && isSessionEditable && !isCompleted && !isSkipped;
 
   useEffect(() => {
     setRows(buildRows(exercise));
   }, [exercise]);
+
+  useEffect(() => {
+    if (!isOpen || !isSessionEditable || isSkipped || isCompleted) {
+      return;
+    }
+
+    const nextIndex = rows.findIndex((row) => !row.saved);
+    if (nextIndex < 0) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      focusField(nextIndex, 'weight');
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [exercise.session_exercise_id, isCompleted, isOpen, isSessionEditable, isSkipped]);
+
+  function registerInput(rowIndex, field, node) {
+    const key = `${rowIndex}:${field}`;
+
+    if (node) {
+      inputRefs.current.set(key, node);
+    } else {
+      inputRefs.current.delete(key);
+    }
+  }
+
+  function focusField(rowIndex, field) {
+    inputRefs.current.get(`${rowIndex}:${field}`)?.focus();
+  }
 
   async function handleSaveRow(rowIndex) {
     const row = rows[rowIndex];
@@ -123,12 +156,33 @@ export function ExerciseAccordion({
           return currentRow;
         }),
       );
+
+      const nextRowIndex = rowIndex + 1;
+      if (nextRowIndex < rows.length) {
+        window.setTimeout(() => {
+          focusField(nextRowIndex, 'weight');
+        }, 0);
+      }
     } catch (error) {
       updateRow(rowIndex, {
         saving: false,
         error: error.message || 'Failed to save set',
       });
     }
+  }
+
+  function handleAdvance(rowIndex, field) {
+    if (field === 'weight') {
+      focusField(rowIndex, 'reps');
+      return;
+    }
+
+    if (field === 'reps') {
+      focusField(rowIndex, 'rir');
+      return;
+    }
+
+    void handleSaveRow(rowIndex);
   }
 
   function updateRow(rowIndex, patch) {
@@ -145,94 +199,128 @@ export function ExerciseAccordion({
   }
 
   return (
-    <article className="rounded-[24px] border border-atlas-line/70 bg-atlas-panel shadow-panel">
+    <article
+      className={`rounded-[24px] border shadow-panel ${
+        isActiveExercise
+          ? 'border-atlas-accent bg-atlas-panel'
+          : isCompleted
+            ? 'border-green-500/30 bg-atlas-panel'
+            : isSkipped
+              ? 'border-atlas-line/60 bg-atlas-mist/60'
+              : 'border-atlas-line/80 bg-atlas-panel'
+      }`}
+    >
       <button
         type="button"
-        className="flex w-full flex-col gap-3 px-5 py-5 text-left sm:flex-row sm:items-center sm:justify-between"
+        className="flex w-full flex-col gap-3 px-4 py-4 text-left"
         onClick={onToggle}
       >
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-            {exercise.muscle_group || 'Accessory'}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
+              {exercise.muscle_group || 'Accessory'}
+            </div>
+            <h3 className="mt-2 truncate text-xl font-semibold capitalize text-atlas-ink">
+              {exercise.exercise_name.replaceAll('_', ' ')}
+            </h3>
+            <p className="mt-2 text-sm text-atlas-slate">{getTargetLabel(exercise)}</p>
           </div>
-          <h3 className="mt-2 text-xl font-semibold capitalize text-atlas-ink">
-            {exercise.exercise_name.replaceAll('_', ' ')}
-          </h3>
-          <p className="mt-1 text-sm text-atlas-slate">{getTargetLabel(exercise)}</p>
-        </div>
 
-        <div className="flex flex-wrap gap-2 text-sm">
-          {isCompleted ? (
-            <span className="rounded-xl bg-green-50 px-3 py-2 text-green-700">Completed</span>
-          ) : null}
-          {isSkipped ? (
-            <span className="rounded-xl bg-atlas-mist px-3 py-2 text-atlas-ink">Skipped</span>
-          ) : null}
-          {exercise.can_add_to_template && isWorkoutComplete ? (
-            <button
-              type="button"
-              className="rounded-xl border border-atlas-line bg-white px-3 py-2 text-atlas-ink"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onAddExerciseToTemplate(exercise);
-              }}
-            >
-              Add to template
-            </button>
-          ) : null}
-          {isSessionEditable && exercise.session_exercise_id && !isSkipped ? (
-            <button
-              type="button"
-              className="rounded-xl border border-atlas-line bg-white px-3 py-2 text-atlas-ink"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onUpdateExerciseStatus(exercise.session_exercise_id, 'skipped');
-              }}
-            >
-              Skip
-            </button>
-          ) : null}
-          {isSessionEditable && exercise.session_exercise_id ? (
-            <button
-              type="button"
-              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onRemoveExercise(exercise.session_exercise_id);
-              }}
-            >
-              Remove
-            </button>
-          ) : null}
+          <div className="flex flex-col items-end gap-2">
+            {isActiveExercise ? (
+              <span className="rounded-full bg-atlas-accentSoft px-3 py-1 text-xs font-semibold text-blue-200">
+                Active
+              </span>
+            ) : null}
+            {isCompleted ? (
+              <span className="rounded-full bg-green-500/15 px-3 py-1 text-xs font-semibold text-green-200">
+                Completed
+              </span>
+            ) : null}
+            {isSkipped ? (
+              <span className="rounded-full bg-atlas-skipped px-3 py-1 text-xs font-semibold text-zinc-200">
+                Skipped
+              </span>
+            ) : null}
+          </div>
         </div>
       </button>
 
       {isOpen ? (
-        <div className="border-t border-atlas-line px-5 py-5">
-          {exercise.notes ? <p className="mb-4 text-sm text-atlas-slate">{exercise.notes}</p> : null}
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-separate border-spacing-y-2 text-sm">
-              <thead>
-                <tr className="text-left text-xs uppercase tracking-[0.16em] text-atlas-slate">
-                  <th className="px-4 py-2 font-medium">Set</th>
-                  <th className="px-4 py-2 font-medium">Weight</th>
-                  <th className="px-4 py-2 font-medium">{timeBased ? 'Time (sec)' : 'Reps'}</th>
-                  <th className="px-4 py-2 font-medium">RIR</th>
-                  <th className="px-4 py-2 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, rowIndex) => (
-                  <SetRow
-                    key={row.setNumber}
-                    row={row}
-                    disabled={!isSessionEditable || isSkipped}
-                    onChange={(field, value) => updateRow(rowIndex, { [field]: value, error: '' })}
-                    onSave={() => handleSaveRow(rowIndex)}
-                  />
-                ))}
-              </tbody>
-            </table>
+        <div className="border-t border-atlas-line/80 px-4 py-4">
+          {exercise.notes ? (
+            <p className="mb-4 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3 text-sm text-atlas-slate">
+              {exercise.notes}
+            </p>
+          ) : null}
+
+          <div className="mb-4 flex flex-wrap gap-2">
+            {exercise.can_add_to_template && isWorkoutComplete ? (
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onAddExerciseToTemplate(exercise);
+                }}
+              >
+                Add to template
+              </button>
+            ) : null}
+            {isSessionEditable && exercise.session_exercise_id && !isSkipped ? (
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onUpdateExerciseStatus(exercise.session_exercise_id, 'skipped');
+                }}
+              >
+                Skip exercise
+              </button>
+            ) : null}
+            {isSessionEditable && exercise.session_exercise_id ? (
+              <button
+                type="button"
+                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onRemoveExercise(exercise.session_exercise_id);
+                }}
+              >
+                Remove
+              </button>
+            ) : null}
+          </div>
+
+          <div className="space-y-3">
+            {rows.map((row, rowIndex) => (
+              <SetRow
+                key={row.setNumber}
+                row={row}
+                disabled={!isSessionEditable || isSkipped}
+                timeBased={timeBased}
+                previousWeight={rowIndex > 0 ? rows[rowIndex - 1].weight : ''}
+                registerInput={(field, node) => registerInput(rowIndex, field, node)}
+                onChange={(field, value) => updateRow(rowIndex, { [field]: value, error: '' })}
+                onAdvance={(field) => handleAdvance(rowIndex, field)}
+                onApplyWeightDelta={(delta) => {
+                  const currentWeight = Number(row.weight || 0);
+                  const nextWeight = Number.isFinite(currentWeight)
+                    ? String((currentWeight + delta).toFixed(1).replace(/\.0$/, ''))
+                    : String(delta);
+
+                  updateRow(rowIndex, { weight: nextWeight, error: '' });
+                }}
+                onCopyPreviousWeight={() =>
+                  updateRow(rowIndex, {
+                    weight: rows[rowIndex - 1]?.weight || '',
+                    error: '',
+                  })
+                }
+                onSave={() => handleSaveRow(rowIndex)}
+              />
+            ))}
           </div>
         </div>
       ) : null}

@@ -6,23 +6,22 @@ export function GymTrackingPage() {
   const workoutSession = useWorkoutSession();
 
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-6">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6">
-        <header className="rounded-[24px] border border-atlas-line/70 bg-atlas-panel px-5 py-5 shadow-panel">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-atlas-slate">
-            Atlas Gym
+    <main className="min-h-screen px-3 py-3 pb-28 sm:px-4">
+      <div className="mx-auto flex max-w-5xl flex-col gap-4">
+        <header className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-atlas-slate">
+            Workout
           </p>
-          <h1 className="mt-2 text-3xl font-semibold text-atlas-ink sm:text-4xl">
-            Workout session
+          <h1 className="mt-2 text-2xl font-semibold text-atlas-ink sm:text-3xl">
+            Fast logging
           </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-atlas-slate sm:text-base">
-            Templates stay stable, sessions stay editable, and the last matching session is used
-            only to prefill suggestions.
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-atlas-slate">
+            Built for short rests, big buttons, and quick set entry with history-based defaults.
           </p>
         </header>
 
         {workoutSession.pageError ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             {workoutSession.pageError}
           </div>
         ) : null}
