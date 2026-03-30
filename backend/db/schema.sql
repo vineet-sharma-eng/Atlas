@@ -20,6 +20,7 @@ template_id INTEGER NOT NULL REFERENCES workout_templates(id) ON DELETE CASCADE,
 exercise_name TEXT NOT NULL,
 muscle_group TEXT,
 order_index INTEGER NOT NULL,
+is_active BOOLEAN NOT NULL DEFAULT TRUE,
 created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -44,6 +45,10 @@ rep_max INTEGER,
 notes TEXT,
 created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Ensure one target row per template exercise
+CREATE UNIQUE INDEX idx_template_sets_unique
+ON template_sets(template_exercise_id);
 
 -- =========================
 -- GYM SESSIONS (ACTUAL DATA)

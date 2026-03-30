@@ -14,12 +14,15 @@ export function WorkoutView({
   availableMuscleGroups,
   isLoading,
   isAddingExercise,
+  isEndingSession,
+  isSessionEditable,
   isWorkoutComplete,
   onOpenExercise,
   onAddExercise,
   onRemoveExercise,
-  onSkipExercise,
+  onUpdateExerciseStatus,
   onSaveSet,
+  onEndSession,
   onAddExerciseToTemplate,
 }) {
   const [formValues, setFormValues] = useState(INITIAL_EXERCISE_FORM);
@@ -28,16 +31,18 @@ export function WorkoutView({
     event.preventDefault();
 
     const exerciseName = formValues.exerciseName.trim();
-    if (!session || !exerciseName || isAddingExercise) {
+    if (!isSessionEditable || !exerciseName || isAddingExercise) {
       return;
     }
 
     onAddExercise({
       exerciseName,
       muscleGroup: formValues.muscleGroup.trim(),
-    }).then(() => {
-      setFormValues(INITIAL_EXERCISE_FORM);
-    });
+    }).then((didAddExercise) => {
+      if (didAddExercise) {
+        setFormValues(INITIAL_EXERCISE_FORM);
+      }
+    }).catch(() => {});
   }
 
   if (isLoading) {
@@ -67,23 +72,42 @@ export function WorkoutView({
             <h2 className="mt-2 text-2xl font-semibold text-atlas-ink">{template.name}</h2>
             <p className="mt-1 text-sm leading-6 text-atlas-slate">
               {session
-                ? 'Log the current session. Prefills come from the last session for the same template.'
+                ? isSessionEditable
+                  ? 'Log the active session. History values are suggestions only.'
+                  : 'Workout completed. Session edits are locked.'
                 : 'Review the planned workout, then start the session to begin logging.'}
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
-              <div className="text-xs uppercase tracking-[0.16em] text-atlas-slate">Exercises</div>
-              <div className="mt-2 text-xl font-semibold text-atlas-ink">{exercises.length}</div>
-            </div>
-            <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
-              <div className="text-xs uppercase tracking-[0.16em] text-atlas-slate">Session</div>
-              <div className="mt-2 text-xl font-semibold text-atlas-ink">{session ? 'Active' : 'Not started'}</div>
-            </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {session ? (
+              <div className="rounded-2xl bg-white px-4 py-3 text-sm shadow-sm">
+                <div className="text-xs uppercase tracking-[0.16em] text-atlas-slate">Status</div>
+                <div className="mt-2 text-xl font-semibold capitalize text-atlas-ink">{session.status}</div>
+              </div>
+            ) : null}
+
+            {session && isSessionEditable ? (
+              <button
+                type="button"
+                className="rounded-2xl bg-atlas-night px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-atlas-ink disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isEndingSession}
+                onClick={() => {
+                  void onEndSession();
+                }}
+              >
+                {isEndingSession ? 'Ending...' : 'End Workout'}
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
+
+      {!isSessionEditable && session ? (
+        <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          Workout Completed
+        </div>
+      ) : null}
 
       <form
         className="grid gap-3 rounded-[24px] border border-atlas-line/70 bg-atlas-panel p-5 shadow-panel md:grid-cols-[minmax(0,1fr)_220px_180px]"
@@ -96,7 +120,7 @@ export function WorkoutView({
             type="text"
             placeholder="Cable fly"
             value={formValues.exerciseName}
-            disabled={!session}
+            disabled={!isSessionEditable}
             onChange={(event) =>
               setFormValues((currentValues) => ({
                 ...currentValues,
@@ -111,7 +135,7 @@ export function WorkoutView({
           <select
             className="w-full rounded-2xl border border-atlas-line bg-white px-4 py-3 text-base shadow-sm disabled:bg-atlas-mist"
             value={formValues.muscleGroup}
-            disabled={!session}
+            disabled={!isSessionEditable}
             onChange={(event) =>
               setFormValues((currentValues) => ({
                 ...currentValues,
@@ -131,7 +155,7 @@ export function WorkoutView({
         <button
           type="submit"
           className="rounded-2xl bg-atlas-night px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-atlas-ink disabled:cursor-not-allowed disabled:opacity-60 md:self-end"
-          disabled={!session || isAddingExercise}
+          disabled={!isSessionEditable || isAddingExercise}
         >
           {isAddingExercise ? 'Adding...' : 'Add Exercise'}
         </button>
@@ -150,14 +174,14 @@ export function WorkoutView({
               openExerciseId ===
               (exercise.session_exercise_id || exercise.template_exercise_id)
             }
-            isSessionActive={Boolean(session)}
+            isSessionEditable={isSessionEditable}
             isWorkoutComplete={isWorkoutComplete}
             onToggle={() =>
               onOpenExercise(exercise.session_exercise_id || exercise.template_exercise_id)
             }
             onSaveSet={onSaveSet}
             onRemoveExercise={onRemoveExercise}
-            onSkipExercise={onSkipExercise}
+            onUpdateExerciseStatus={onUpdateExerciseStatus}
             onAddExerciseToTemplate={onAddExerciseToTemplate}
           />
         ))

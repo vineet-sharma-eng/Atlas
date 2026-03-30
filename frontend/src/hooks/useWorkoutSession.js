@@ -4,10 +4,12 @@ import {
   addGymExercise,
   createGymSet,
   deleteGymExercise,
+  endGymSession,
+  getActiveGymSession,
   getGymSessionInit,
   getGymTemplates,
-  skipGymExercise,
   startGymSession,
+  updateGymExerciseStatus,
 } from '../api/gymApi';
 
 const DEFAULT_MUSCLE_GROUPS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Biceps', 'Triceps', 'Core'];
@@ -24,8 +26,10 @@ export function useWorkoutSession() {
   const [isLoadingSessionInit, setIsLoadingSessionInit] = useState(false);
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [isAddingExercise, setIsAddingExercise] = useState(false);
+  const [isEndingSession, setIsEndingSession] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
+  const isSessionEditable = session?.status === 'active';
   const availableMuscleGroups = Array.from(
     new Set(
       exercises
@@ -38,12 +42,15 @@ export function useWorkoutSession() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadTemplates() {
+    async function loadInitialData() {
       setIsLoadingTemplates(true);
       setPageError('');
 
       try {
-        const templateList = await getGymTemplates();
+        const [templateList, activeSessionState] = await Promise.all([
+          getGymTemplates(),
+          getActiveGymSession(),
+        ]);
 
         if (!isMounted) {
           return;
@@ -51,13 +58,18 @@ export function useWorkoutSession() {
 
         setTemplates(templateList);
 
+        if (activeSessionState) {
+          hydrateSessionState(activeSessionState);
+          return;
+        }
+
         if (templateList.length > 0) {
           const autoSelectedTemplate = findTemplateForToday(templateList) || templateList[0];
           setSelectedTemplateId(String(autoSelectedTemplate.id));
         }
       } catch (error) {
         if (isMounted) {
-          setPageError(error.message || 'Failed to load templates');
+          setPageError(error.message || 'Failed to load workout data');
         }
       } finally {
         if (isMounted) {
@@ -66,7 +78,7 @@ export function useWorkoutSession() {
       }
     }
 
-    loadTemplates();
+    loadInitialData();
 
     return () => {
       isMounted = false;
@@ -74,7 +86,7 @@ export function useWorkoutSession() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTemplateId) {
+    if (!selectedTemplateId || session?.status === 'active') {
       return;
     }
 
@@ -90,11 +102,8 @@ export function useWorkoutSession() {
     setPageError('');
 
     try {
-      const initData = await getGymSessionInit(templateId, today);
-      setTemplate(initData.template);
-      setSession(initData.current_session);
-      setExercises(initData.exercises);
-      setOpenExerciseId(findNextOpenExerciseId(initData.exercises));
+      const initData = await getGymSessionInit(templateId);
+      hydrateSessionState(initData);
     } catch (error) {
       setPageError(error.message || 'Failed to load workout session');
     } finally {
@@ -103,7 +112,7 @@ export function useWorkoutSession() {
   }
 
   async function handleStartSession() {
-    if (!selectedTemplateId || isStartingSession) {
+    if (!selectedTemplateId || isStartingSession || session?.status === 'active') {
       return;
     }
 
@@ -116,7 +125,10 @@ export function useWorkoutSession() {
         date: today,
       });
 
-      await refreshSessionInit(selectedTemplateId);
+      const activeSessionState = await getActiveGymSession();
+      if (activeSessionState) {
+        hydrateSessionState(activeSessionState);
+      }
     } catch (error) {
       setPageError(error.message || 'Failed to start session');
     } finally {
@@ -124,8 +136,26 @@ export function useWorkoutSession() {
     }
   }
 
+  async function handleEndSession() {
+    if (!session || session.status !== 'active' || isEndingSession) {
+      return;
+    }
+
+    setIsEndingSession(true);
+    setPageError('');
+
+    try {
+      const completedSession = await endGymSession(session.id);
+      setSession(completedSession);
+    } catch (error) {
+      setPageError(error.message || 'Failed to end workout');
+    } finally {
+      setIsEndingSession(false);
+    }
+  }
+
   async function handleAddExercise({ exerciseName, muscleGroup }) {
-    if (!session || isAddingExercise) {
+    if (!session || !isSessionEditable || isAddingExercise) {
       return;
     }
 
@@ -152,7 +182,7 @@ export function useWorkoutSession() {
             rep_min: 8,
             rep_max: 12,
             notes: '',
-            is_skipped: false,
+            status: createdExercise.status || 'pending',
             source: 'session',
             can_add_to_template: true,
             sets: [],
@@ -163,44 +193,57 @@ export function useWorkoutSession() {
         setOpenExerciseId(createdExercise.session_exercise_id);
         return nextExercises;
       });
+      return true;
     } catch (error) {
       setPageError(error.message || 'Failed to add exercise');
+      return false;
     } finally {
       setIsAddingExercise(false);
     }
   }
 
   async function handleRemoveExercise(sessionExerciseId) {
-    await deleteGymExercise(sessionExerciseId);
+    try {
+      await deleteGymExercise(sessionExerciseId);
 
-    setExercises((currentExercises) => {
-      const nextExercises = currentExercises.filter(
-        (exercise) => exercise.session_exercise_id !== sessionExerciseId,
-      );
-      setOpenExerciseId(findNextOpenExerciseId(nextExercises));
-      return nextExercises;
-    });
+      setExercises((currentExercises) => {
+        const nextExercises = currentExercises.filter(
+          (exercise) => exercise.session_exercise_id !== sessionExerciseId,
+        );
+        setOpenExerciseId(findNextOpenExerciseId(nextExercises));
+        return nextExercises;
+      });
+    } catch (error) {
+      setPageError(error.message || 'Failed to remove exercise');
+    }
   }
 
-  async function handleSkipExercise(sessionExerciseId, skipped) {
-    await skipGymExercise(sessionExerciseId, skipped);
+  async function handleUpdateExerciseStatus(sessionExerciseId, status) {
+    try {
+      const updatedExercise = await updateGymExerciseStatus(sessionExerciseId, status);
 
-    setExercises((currentExercises) => {
-      const nextExercises = currentExercises.map((exercise) =>
-        exercise.session_exercise_id === sessionExerciseId
-          ? {
-              ...exercise,
-              is_skipped: skipped,
-            }
-          : exercise,
-      );
+      setExercises((currentExercises) => {
+        const nextExercises = currentExercises.map((exercise) =>
+          exercise.session_exercise_id === sessionExerciseId
+            ? {
+                ...exercise,
+                status: updatedExercise.status,
+              }
+            : exercise,
+        );
 
-      if (skipped) {
-        setOpenExerciseId(findNextOpenExerciseId(nextExercises, sessionExerciseId));
-      }
+        if (status === 'completed' || status === 'skipped') {
+          setOpenExerciseId(findNextOpenExerciseId(nextExercises, sessionExerciseId));
+        }
 
-      return nextExercises;
-    });
+        return nextExercises;
+      });
+
+      return updatedExercise;
+    } catch (error) {
+      setPageError(error.message || 'Failed to update exercise status');
+      return null;
+    }
   }
 
   async function handleSaveSet(sessionExerciseId, rowPayload) {
@@ -212,27 +255,37 @@ export function useWorkoutSession() {
       rir: rowPayload.rir === '' ? null : Number(rowPayload.rir),
     });
 
+    let shouldMarkCompleted = false;
+
     setExercises((currentExercises) => {
-      const nextExercises = currentExercises.map((exercise) =>
-        exercise.session_exercise_id === sessionExerciseId
-          ? {
-              ...exercise,
-              sets: [...exercise.sets.filter((set) => set.set_number !== createdSet.set_number), createdSet]
-                .sort((left, right) => left.set_number - right.set_number),
-            }
-          : exercise,
-      );
+      const nextExercises = currentExercises.map((exercise) => {
+        if (exercise.session_exercise_id !== sessionExerciseId) {
+          return exercise;
+        }
 
-      const targetExercise = nextExercises.find(
-        (exercise) => exercise.session_exercise_id === sessionExerciseId,
-      );
+        const nextSets = [...exercise.sets.filter((set) => set.set_number !== createdSet.set_number), createdSet]
+          .sort((left, right) => left.set_number - right.set_number);
 
-      if (targetExercise && isExerciseComplete(targetExercise)) {
-        setOpenExerciseId(findNextOpenExerciseId(nextExercises, sessionExerciseId));
-      }
+        if (nextSets.length >= exercise.target_sets && exercise.status !== 'completed') {
+          shouldMarkCompleted = true;
+        }
+
+        return {
+          ...exercise,
+          sets: nextSets,
+        };
+      });
 
       return nextExercises;
     });
+
+    if (shouldMarkCompleted) {
+      try {
+        await handleUpdateExerciseStatus(sessionExerciseId, 'completed');
+      } catch (error) {
+        setPageError(error.message || 'Failed to update exercise status');
+      }
+    }
 
     return createdSet;
   }
@@ -242,22 +295,34 @@ export function useWorkoutSession() {
       return;
     }
 
-    await addExerciseToTemplate({
-      templateId: template.id,
-      exerciseName: exercise.exercise_name,
-      muscleGroup: exercise.muscle_group,
-    });
+    try {
+      await addExerciseToTemplate({
+        templateId: template.id,
+        exerciseName: exercise.exercise_name,
+        muscleGroup: exercise.muscle_group,
+      });
 
-    setExercises((currentExercises) =>
-      currentExercises.map((currentExercise) =>
-        currentExercise.session_exercise_id === exercise.session_exercise_id
-          ? {
-              ...currentExercise,
-              can_add_to_template: false,
-            }
-          : currentExercise,
-      ),
-    );
+      setExercises((currentExercises) =>
+        currentExercises.map((currentExercise) =>
+          currentExercise.session_exercise_id === exercise.session_exercise_id
+            ? {
+                ...currentExercise,
+                can_add_to_template: false,
+              }
+            : currentExercise,
+        ),
+      );
+    } catch (error) {
+      setPageError(error.message || 'Failed to add exercise to template');
+    }
+  }
+
+  function hydrateSessionState(state) {
+    setTemplate(state.template);
+    setSession(state.current_session);
+    setExercises(state.exercises);
+    setSelectedTemplateId(state.template ? String(state.template.id) : '');
+    setOpenExerciseId(findNextOpenExerciseId(state.exercises));
   }
 
   return {
@@ -272,15 +337,18 @@ export function useWorkoutSession() {
     isLoadingSessionInit,
     isStartingSession,
     isAddingExercise,
+    isEndingSession,
+    isSessionEditable,
     availableMuscleGroups,
     today,
-    isWorkoutComplete: exercises.length > 0 && exercises.every(isExerciseComplete),
+    isWorkoutComplete: exercises.length > 0 && exercises.every(isExerciseResolved),
     setSelectedTemplateId,
     setOpenExerciseId,
     startSession: handleStartSession,
+    endSession: handleEndSession,
     addExercise: handleAddExercise,
     removeExercise: handleRemoveExercise,
-    skipExercise: handleSkipExercise,
+    updateExerciseStatus: handleUpdateExerciseStatus,
     saveSet: handleSaveSet,
     addSessionExerciseToTemplate: handleAddExerciseToTemplate,
   };
@@ -301,24 +369,20 @@ function findNextOpenExerciseId(exercises, currentExerciseId = null) {
     ? exercises.findIndex((exercise) => exercise.session_exercise_id === currentExerciseId)
     : -1;
   const afterCurrent = currentIndex >= 0 ? exercises.slice(currentIndex + 1) : exercises;
-  const nextExercise = afterCurrent.find((exercise) => !isExerciseComplete(exercise));
+  const nextExercise = afterCurrent.find((exercise) => !isExerciseResolved(exercise));
 
   if (nextExercise) {
     return nextExercise.session_exercise_id || nextExercise.template_exercise_id;
   }
 
-  const firstIncomplete = exercises.find((exercise) => !isExerciseComplete(exercise));
-  return firstIncomplete
-    ? firstIncomplete.session_exercise_id || firstIncomplete.template_exercise_id
+  const firstPending = exercises.find((exercise) => !isExerciseResolved(exercise));
+  return firstPending
+    ? firstPending.session_exercise_id || firstPending.template_exercise_id
     : null;
 }
 
-function isExerciseComplete(exercise) {
-  if (exercise.is_skipped) {
-    return true;
-  }
-
-  return exercise.sets.length >= exercise.target_sets && exercise.target_sets > 0;
+function isExerciseResolved(exercise) {
+  return exercise.status === 'completed' || exercise.status === 'skipped';
 }
 
 function buildEmptyPrefillSets(targetSets) {

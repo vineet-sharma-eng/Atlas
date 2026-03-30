@@ -18,6 +18,8 @@ export function TemplateSelector({
   onChangeTemplate,
   onStartSession,
 }) {
+  const isSessionActive = session?.status === 'active';
+
   return (
     <section className="rounded-[24px] border border-atlas-line/70 bg-atlas-panel p-5 shadow-panel">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">
@@ -35,7 +37,7 @@ export function TemplateSelector({
               className="w-full rounded-2xl border border-atlas-line bg-white px-4 py-3 text-base shadow-sm"
               value={selectedTemplateId}
               onChange={(event) => onChangeTemplate(event.target.value)}
-              disabled={isLoadingTemplates || templates.length === 0}
+              disabled={isLoadingTemplates || templates.length === 0 || isSessionActive}
             >
               {templates.length === 0 ? (
                 <option value="">No templates found</option>
@@ -55,11 +57,12 @@ export function TemplateSelector({
                 <div>
                   <div className="font-semibold text-atlas-ink">{template.name}</div>
                   <div className="mt-1 text-atlas-slate">
-                    {template.day || 'No assigned day'}{template.day_order ? ` • Order ${template.day_order}` : ''}
+                    {template.day || 'No assigned day'}
+                    {template.day_order ? ` • Order ${template.day_order}` : ''}
                   </div>
                 </div>
                 <div className="rounded-xl bg-atlas-mist px-3 py-2 text-atlas-ink">
-                  {session ? `Session ${formatDate(session.date)}` : `Today ${formatDate(today)}`}
+                  {session ? `${session.status} • ${formatDate(session.date)}` : `Today ${formatDate(today)}`}
                 </div>
               </div>
             </div>
@@ -69,10 +72,10 @@ export function TemplateSelector({
         <button
           type="button"
           className="rounded-2xl bg-atlas-night px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-atlas-ink disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={!template || isLoadingSessionInit || isStartingSession}
+          disabled={!template || isLoadingSessionInit || isStartingSession || isSessionActive}
           onClick={onStartSession}
         >
-          {session ? 'Resume Session' : isStartingSession ? 'Starting...' : 'Start Session'}
+          {isSessionActive ? 'Active Session Loaded' : isStartingSession ? 'Starting...' : 'Start Session'}
         </button>
       </div>
     </section>

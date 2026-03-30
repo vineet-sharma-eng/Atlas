@@ -47,16 +47,18 @@ function getTargetLabel(exercise) {
 export function ExerciseAccordion({
   exercise,
   isOpen,
-  isSessionActive,
+  isSessionEditable,
   isWorkoutComplete,
   onToggle,
   onSaveSet,
   onRemoveExercise,
-  onSkipExercise,
+  onUpdateExerciseStatus,
   onAddExerciseToTemplate,
 }) {
   const [rows, setRows] = useState(() => buildRows(exercise));
   const timeBased = isTimeBasedExercise(exercise.notes);
+  const isCompleted = exercise.status === 'completed';
+  const isSkipped = exercise.status === 'skipped';
 
   useEffect(() => {
     setRows(buildRows(exercise));
@@ -65,7 +67,7 @@ export function ExerciseAccordion({
   async function handleSaveRow(rowIndex) {
     const row = rows[rowIndex];
 
-    if (!isSessionActive || row.saved || row.saving || !exercise.session_exercise_id) {
+    if (!isSessionEditable || row.saving || !exercise.session_exercise_id) {
       return;
     }
 
@@ -160,7 +162,10 @@ export function ExerciseAccordion({
         </div>
 
         <div className="flex flex-wrap gap-2 text-sm">
-          {exercise.is_skipped ? (
+          {isCompleted ? (
+            <span className="rounded-xl bg-green-50 px-3 py-2 text-green-700">Completed</span>
+          ) : null}
+          {isSkipped ? (
             <span className="rounded-xl bg-atlas-mist px-3 py-2 text-atlas-ink">Skipped</span>
           ) : null}
           {exercise.can_add_to_template && isWorkoutComplete ? (
@@ -169,35 +174,35 @@ export function ExerciseAccordion({
               className="rounded-xl border border-atlas-line bg-white px-3 py-2 text-atlas-ink"
               onClick={(event) => {
                 event.stopPropagation();
-                onAddExerciseToTemplate(exercise);
+                void onAddExerciseToTemplate(exercise);
               }}
             >
               Add to template
             </button>
           ) : null}
-          {isSessionActive && exercise.session_exercise_id ? (
-            <>
-              <button
-                type="button"
-                className="rounded-xl border border-atlas-line bg-white px-3 py-2 text-atlas-ink"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSkipExercise(exercise.session_exercise_id, !exercise.is_skipped);
-                }}
-              >
-                {exercise.is_skipped ? 'Unskip' : 'Skip'}
-              </button>
-              <button
-                type="button"
-                className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onRemoveExercise(exercise.session_exercise_id);
-                }}
-              >
-                Remove
-              </button>
-            </>
+          {isSessionEditable && exercise.session_exercise_id && !isSkipped ? (
+            <button
+              type="button"
+              className="rounded-xl border border-atlas-line bg-white px-3 py-2 text-atlas-ink"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onUpdateExerciseStatus(exercise.session_exercise_id, 'skipped');
+              }}
+            >
+              Skip
+            </button>
+          ) : null}
+          {isSessionEditable && exercise.session_exercise_id ? (
+            <button
+              type="button"
+              className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onRemoveExercise(exercise.session_exercise_id);
+              }}
+            >
+              Remove
+            </button>
           ) : null}
         </div>
       </button>
@@ -221,7 +226,7 @@ export function ExerciseAccordion({
                   <SetRow
                     key={row.setNumber}
                     row={row}
-                    disabled={!isSessionActive || exercise.is_skipped}
+                    disabled={!isSessionEditable || isSkipped}
                     onChange={(field, value) => updateRow(rowIndex, { [field]: value, error: '' })}
                     onSave={() => handleSaveRow(rowIndex)}
                   />

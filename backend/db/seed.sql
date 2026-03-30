@@ -101,4 +101,8 @@ INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, 
 (31, 4, 15, 15, NULL),
 (32, 3, 15, 15, NULL),
 (33, 3, NULL, NULL, '45-60 sec')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (template_exercise_id) DO UPDATE SET
+target_sets = EXCLUDED.target_sets,
+rep_min = EXCLUDED.rep_min,
+rep_max = EXCLUDED.rep_max,
+notes = EXCLUDED.notes;
