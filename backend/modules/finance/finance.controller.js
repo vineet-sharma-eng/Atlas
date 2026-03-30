@@ -3,7 +3,9 @@ const os = require('os');
 const path = require('path');
 
 const { getTransactionAnalysisData, insertTransactions } = require('../../db/transactions');
+const { getLatestInsights } = require('../../db/insights');
 const { generate } = require('../../services/ai/ollama');
+const { generateFinanceInsights } = require('../../services/insights/financeInsights');
 const { parseGooglePayTransactions } = require('../../services/parser/googlePayTransactionParser');
 const { extractPdfText } = require('../../services/parser/pdfExtractor');
 const { parseMultipartFormData } = require('../../utils/multipart');
@@ -108,6 +110,9 @@ async function getAnalysis(req, res, next) {
           largest_transaction: null,
           anomaly_threshold: 0,
           anomalies: [],
+          transfer_count: analysisData.transferCount || 0,
+          comparison: analysisData.comparison,
+          category_trends: [],
           days,
         },
       });
@@ -126,13 +131,17 @@ async function getAnalysis(req, res, next) {
       largestTransaction: analysisData.largestTransaction,
       averageAmount: analysisData.stats.averageAmount,
       anomalies,
+      transferCount: analysisData.transferCount,
+      comparison: analysisData.comparison,
+      categoryTrends: analysisData.categoryTrends,
     });
     const insights = await generate(prompt);
     const summary = buildSummary(
       analysisData.totalSpent,
       topCategory,
       analysisData.largestTransaction,
-      anomalies
+      anomalies,
+      analysisData.comparison
     );
 
     return res.status(200).json({
@@ -145,6 +154,9 @@ async function getAnalysis(req, res, next) {
         largest_transaction: analysisData.largestTransaction,
         anomaly_threshold: toCurrencyValue(analysisData.stats.averageAmount * 2),
         anomalies,
+        transfer_count: analysisData.transferCount,
+        comparison: analysisData.comparison,
+        category_trends: analysisData.categoryTrends.slice(0, 10),
         days,
       },
     });
@@ -177,6 +189,9 @@ function buildFinanceAnalysisPrompt({
   largestTransaction,
   averageAmount,
   anomalies,
+  transferCount,
+  comparison,
+  categoryTrends,
 }) {
   const periodLabel = days ? `last ${days} days` : 'all available transaction history';
   const topCategories = categoryBreakdown
@@ -198,16 +213,45 @@ function buildFinanceAnalysisPrompt({
         )
         .join('\n')
     : '- No obvious high-value anomalies detected';
+  const trendText = comparison
+    ? `Current period spend: ${toCurrencyValue(totalSpent)}
+Previous comparable period spend: ${toCurrencyValue(comparison.previousTotalSpent)}
+Change: ${formatSignedAmount(comparison.changeAmount)} (${formatPercentage(
+        comparison.changePercent
+      )})`
+    : '- No period-over-period comparison available';
+  const categoryTrendText = categoryTrends.length
+    ? categoryTrends
+        .slice(0, 10)
+        .map(
+          (item) =>
+            `- ${item.category}: ${toCurrencyValue(item.currentTotal)} vs ${toCurrencyValue(
+              item.previousTotal
+            )} (${formatSignedAmount(item.changeAmount)}, ${formatPercentage(
+              item.changePercent
+            )})`
+        )
+        .join('\n')
+    : '- No category trend data available';
 
   return [
     'You are analyzing personal finance data for Atlas.',
     `Use only the structured information below for the ${periodLabel}.`,
+    'Ignore transfers; only analyze real expenses.',
+    `Excluded transfers from analysis: ${transferCount || 0}.`,
+    'Explain trends clearly using numbers. Focus on what changed week-over-week.',
     '',
     `Total spend: ${toCurrencyValue(totalSpent)}`,
     `Average transaction amount: ${toCurrencyValue(averageAmount)}`,
     '',
+    'Trend comparison:',
+    trendText,
+    '',
     'Top categories:',
     topCategories || '- No category data',
+    '',
+    'Category trends:',
+    categoryTrendText,
     '',
     'Recent transactions:',
     recentItems || '- No recent transactions',
@@ -232,7 +276,13 @@ function buildFinanceAnalysisPrompt({
   ].join('\n');
 }
 
-function buildSummary(totalSpent, topCategory, largestTransaction, anomalies) {
+function buildSummary(
+  totalSpent,
+  topCategory,
+  largestTransaction,
+  anomalies,
+  comparison
+) {
   const parts = [`Total spend is ${toCurrencyValue(totalSpent)}`];
 
   if (topCategory) {
@@ -249,6 +299,14 @@ function buildSummary(totalSpent, topCategory, largestTransaction, anomalies) {
 
   if (anomalies.length > 0) {
     parts.push(`${anomalies.length} high-value transaction(s) stand out`);
+  }
+
+  if (comparison) {
+    parts.push(
+      `period-over-period change is ${formatSignedAmount(
+        comparison.changeAmount
+      )} (${formatPercentage(comparison.changePercent)})`
+    );
   }
 
   return `${parts.join(', ')}.`;
@@ -270,7 +328,44 @@ function toCurrencyValue(value) {
   return Number(value || 0).toFixed(2);
 }
 
+function formatSignedAmount(value) {
+  const amount = Number(value || 0);
+  return `${amount >= 0 ? '+' : '-'}${Math.abs(amount).toFixed(2)}`;
+}
+
+function formatPercentage(value) {
+  if (value === null || value === undefined) {
+    return 'N/A';
+  }
+
+  return `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}%`;
+}
+
+async function triggerInsights(req, res, next) {
+  try {
+    const insight = await generateFinanceInsights();
+
+    return res.status(200).json({
+      message: 'Finance insights generated successfully.',
+      insight,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function listInsights(req, res, next) {
+  try {
+    const insights = await getLatestInsights(10);
+    return res.status(200).json(insights);
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   importPdf,
   getAnalysis,
+  triggerInsights,
+  listInsights,
 };
