@@ -9,6 +9,7 @@ const {
   getExerciseProgress,
   getActiveSessionState,
   getGymSessionDetail,
+  listRecentExercises,
   getSessionInit,
   listGymSessions,
   listWorkoutTemplates,
@@ -29,6 +30,16 @@ async function listTemplates(req, res, next) {
   }
 }
 
+async function listRecentExercisesHandler(req, res, next) {
+  try {
+    const limit = req.query.limit ? parsePositiveInteger(req.query.limit, 'limit') : 12;
+    const exercises = await listRecentExercises(limit);
+    return res.status(200).json(exercises);
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function getActiveSession(req, res, next) {
   try {
     const activeSession = await getActiveSessionState();
@@ -41,7 +52,8 @@ async function getActiveSession(req, res, next) {
 async function initSession(req, res, next) {
   try {
     const templateId = parsePositiveInteger(req.params.template_id, 'template_id');
-    const initData = await getSessionInit({ templateId });
+    const date = req.query.date ? parseDate(req.query.date) : null;
+    const initData = await getSessionInit({ templateId, date });
 
     if (!initData) {
       return res.status(404).json({ error: 'Workout template not found' });
@@ -412,6 +424,7 @@ function parseDate(value) {
 
 module.exports = {
   listTemplates,
+  listRecentExercisesHandler,
   getActiveSession,
   initSession,
   startSession,

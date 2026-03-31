@@ -30,6 +30,11 @@ export function getGymTemplates() {
   return request('/gym/templates');
 }
 
+export function getRecentGymExercises(limit = 12) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return request(`/gym/exercises/recent?${params.toString()}`);
+}
+
 export function updateGymTemplateName(templateId, name) {
   return request(`/gym/template/${templateId}`, {
     method: 'PATCH',
@@ -67,8 +72,15 @@ export function getActiveGymSession() {
   return request('/gym/session/active');
 }
 
-export function getGymSessionInit(templateId) {
-  return request(`/gym/session/init/${templateId}`);
+export function getGymSessionInit(templateId, date) {
+  const params = new URLSearchParams();
+
+  if (date) {
+    params.set('date', date);
+  }
+
+  const query = params.toString();
+  return request(`/gym/session/init/${templateId}${query ? `?${query}` : ''}`);
 }
 
 export function getGymSessions() {

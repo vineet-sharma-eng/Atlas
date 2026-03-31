@@ -6,8 +6,10 @@ import {
   deleteGymExercise,
   endGymSession,
   getActiveGymSession,
+  getGymExerciseHistory,
   getGymSessionInit,
   getGymTemplates,
+  getRecentGymExercises,
   startGymSession,
   updateGymExerciseStatus,
 } from '../api/gymApi';
@@ -27,9 +29,15 @@ export function useWorkoutSession() {
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [isAddingExercise, setIsAddingExercise] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
+  const [recentExercises, setRecentExercises] = useState([]);
+  const [exerciseHistoryByName, setExerciseHistoryByName] = useState({});
+  const [loadingExerciseHistoryByName, setLoadingExerciseHistoryByName] = useState({});
 
   const today = new Date().toISOString().slice(0, 10);
   const isSessionEditable = session?.status === 'active';
+  const activeTemplateDefinition = templates.find(
+    (item) => String(item.id) === String(template?.id || selectedTemplateId || ''),
+  );
   const availableMuscleGroups = Array.from(
     new Set(
       exercises
@@ -38,6 +46,12 @@ export function useWorkoutSession() {
         .concat(DEFAULT_MUSCLE_GROUPS),
     ),
   );
+  const sessionSummary = buildSessionSummary(exercises);
+  const suggestedExercises = buildSuggestedExercises({
+    currentExercises: exercises,
+    recentExercises,
+    templateExercises: activeTemplateDefinition?.exercises || [],
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -47,9 +61,10 @@ export function useWorkoutSession() {
       setPageError('');
 
       try {
-        const [templateList, activeSessionState] = await Promise.all([
+        const [templateList, activeSessionState, recentExerciseList] = await Promise.all([
           getGymTemplates(),
           getActiveGymSession(),
+          getRecentGymExercises().catch(() => []),
         ]);
 
         if (!isMounted) {
@@ -57,6 +72,7 @@ export function useWorkoutSession() {
         }
 
         setTemplates(templateList);
+        setRecentExercises(recentExerciseList);
 
         if (activeSessionState) {
           hydrateSessionState(activeSessionState);
@@ -102,7 +118,7 @@ export function useWorkoutSession() {
     setPageError('');
 
     try {
-      const initData = await getGymSessionInit(templateId);
+      const initData = await getGymSessionInit(templateId, today);
       hydrateSessionState(initData);
     } catch (error) {
       setPageError(error.message || 'Failed to load workout session');
@@ -147,8 +163,10 @@ export function useWorkoutSession() {
     try {
       const completedSession = await endGymSession(session.id);
       setSession(completedSession);
+      return true;
     } catch (error) {
       setPageError(error.message || 'Failed to end workout');
+      return false;
     } finally {
       setIsEndingSession(false);
     }
@@ -170,6 +188,15 @@ export function useWorkoutSession() {
       });
 
       setExercises((currentExercises) => {
+        const existingExercise = currentExercises.find(
+          (exercise) => exercise.session_exercise_id === createdExercise.session_exercise_id,
+        );
+
+        if (existingExercise) {
+          setOpenExerciseId(createdExercise.session_exercise_id);
+          return currentExercises;
+        }
+
         const nextExercises = [
           ...currentExercises,
           {
@@ -193,6 +220,15 @@ export function useWorkoutSession() {
         setOpenExerciseId(createdExercise.session_exercise_id);
         return nextExercises;
       });
+      setRecentExercises((currentExercises) =>
+        mergeRecentExercises([
+          {
+            exercise_name: createdExercise.exercise_name,
+            muscle_group: createdExercise.muscle_group,
+          },
+          ...currentExercises,
+        ]),
+      );
       return true;
     } catch (error) {
       setPageError(error.message || 'Failed to add exercise');
@@ -317,6 +353,34 @@ export function useWorkoutSession() {
     }
   }
 
+  async function handleLoadExerciseHistory(exerciseName) {
+    const normalizedName = normalizeExerciseName(exerciseName);
+
+    if (!normalizedName || exerciseHistoryByName[normalizedName] || loadingExerciseHistoryByName[normalizedName]) {
+      return;
+    }
+
+    setLoadingExerciseHistoryByName((currentState) => ({
+      ...currentState,
+      [normalizedName]: true,
+    }));
+
+    try {
+      const history = await getGymExerciseHistory(exerciseName);
+      setExerciseHistoryByName((currentState) => ({
+        ...currentState,
+        [normalizedName]: groupExerciseHistory(history).slice(0, 3),
+      }));
+    } catch (error) {
+      setPageError(error.message || 'Failed to load exercise history');
+    } finally {
+      setLoadingExerciseHistoryByName((currentState) => ({
+        ...currentState,
+        [normalizedName]: false,
+      }));
+    }
+  }
+
   function hydrateSessionState(state) {
     setTemplate(state.template);
     setSession(state.current_session);
@@ -340,6 +404,11 @@ export function useWorkoutSession() {
     isEndingSession,
     isSessionEditable,
     availableMuscleGroups,
+    recentExercises,
+    suggestedExercises,
+    sessionSummary,
+    exerciseHistoryByName,
+    loadingExerciseHistoryByName,
     today,
     isWorkoutComplete: exercises.length > 0 && exercises.every(isExerciseResolved),
     setSelectedTemplateId,
@@ -351,6 +420,7 @@ export function useWorkoutSession() {
     updateExerciseStatus: handleUpdateExerciseStatus,
     saveSet: handleSaveSet,
     addSessionExerciseToTemplate: handleAddExerciseToTemplate,
+    loadExerciseHistory: handleLoadExerciseHistory,
   };
 }
 
@@ -383,6 +453,107 @@ function findNextOpenExerciseId(exercises, currentExerciseId = null) {
 
 function isExerciseResolved(exercise) {
   return exercise.status === 'completed' || exercise.status === 'skipped';
+}
+
+function buildSessionSummary(exercises) {
+  const total = exercises.length;
+  const completed = exercises.filter((exercise) => exercise.status === 'completed').length;
+  const skipped = exercises.filter((exercise) => exercise.status === 'skipped').length;
+  const pending = total - completed - skipped;
+
+  return {
+    total,
+    completed,
+    skipped,
+    pending,
+    percentComplete: total === 0 ? 0 : Math.round(((completed + skipped) / total) * 100),
+    unresolvedExercises: exercises.filter((exercise) => !isExerciseResolved(exercise)),
+  };
+}
+
+function buildSuggestedExercises({ currentExercises, recentExercises, templateExercises }) {
+  const currentNames = new Set(currentExercises.map((exercise) => normalizeExerciseName(exercise.exercise_name)));
+  const suggestions = [];
+  const seenNames = new Set(currentNames);
+
+  for (const exercise of templateExercises) {
+    if (exercise.is_active === false) {
+      continue;
+    }
+
+    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+    if (!normalizedName || seenNames.has(normalizedName)) {
+      continue;
+    }
+
+    seenNames.add(normalizedName);
+    suggestions.push({
+      exercise_name: exercise.exercise_name,
+      muscle_group: exercise.muscle_group || '',
+      source: 'template',
+    });
+  }
+
+  for (const exercise of recentExercises) {
+    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+    if (!normalizedName || seenNames.has(normalizedName)) {
+      continue;
+    }
+
+    seenNames.add(normalizedName);
+    suggestions.push({
+      exercise_name: exercise.exercise_name,
+      muscle_group: exercise.muscle_group || '',
+      source: 'recent',
+    });
+  }
+
+  return suggestions.slice(0, 10);
+}
+
+function mergeRecentExercises(exercises) {
+  const seenNames = new Set();
+  const recentExercises = [];
+
+  for (const exercise of exercises) {
+    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+
+    if (!normalizedName || seenNames.has(normalizedName)) {
+      continue;
+    }
+
+    seenNames.add(normalizedName);
+    recentExercises.push(exercise);
+  }
+
+  return recentExercises.slice(0, 12);
+}
+
+function groupExerciseHistory(historyRows) {
+  const groupedHistory = new Map();
+
+  for (const row of historyRows) {
+    const currentEntry = groupedHistory.get(row.date);
+
+    if (currentEntry) {
+      currentEntry.sets.push(row);
+      continue;
+    }
+
+    groupedHistory.set(row.date, {
+      date: row.date,
+      sets: [row],
+    });
+  }
+
+  return Array.from(groupedHistory.values()).map((entry) => ({
+    ...entry,
+    sets: entry.sets.sort((left, right) => left.set_number - right.set_number),
+  }));
+}
+
+function normalizeExerciseName(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function buildEmptyPrefillSets(targetSets) {

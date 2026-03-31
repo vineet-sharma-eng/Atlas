@@ -45,6 +45,10 @@ export function GymTrackingPage() {
           exercises={workoutSession.exercises}
           openExerciseId={workoutSession.openExerciseId}
           availableMuscleGroups={workoutSession.availableMuscleGroups}
+          suggestedExercises={workoutSession.suggestedExercises}
+          sessionSummary={workoutSession.sessionSummary}
+          exerciseHistoryByName={workoutSession.exerciseHistoryByName}
+          loadingExerciseHistoryByName={workoutSession.loadingExerciseHistoryByName}
           isLoading={workoutSession.isLoadingSessionInit}
           isAddingExercise={workoutSession.isAddingExercise}
           isEndingSession={workoutSession.isEndingSession}
@@ -57,6 +61,7 @@ export function GymTrackingPage() {
           onSaveSet={workoutSession.saveSet}
           onEndSession={workoutSession.endSession}
           onAddExerciseToTemplate={workoutSession.addSessionExerciseToTemplate}
+          onLoadExerciseHistory={workoutSession.loadExerciseHistory}
         />
       </div>
     </main>

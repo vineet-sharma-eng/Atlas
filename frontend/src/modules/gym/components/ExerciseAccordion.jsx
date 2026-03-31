@@ -30,6 +30,13 @@ function buildRows(exercise) {
       reps: currentSet?.reps ?? prefillSet?.reps ?? '',
       rir: currentSet?.rir ?? prefillSet?.rir ?? '',
       saved: Boolean(currentSet),
+      savedValues: currentSet
+        ? {
+            weight: currentSet.weight === null ? '' : String(currentSet.weight ?? ''),
+            reps: currentSet.reps ?? '',
+            rir: currentSet.rir ?? '',
+          }
+        : null,
       saving: false,
       error: '',
     };
@@ -46,6 +53,8 @@ function getTargetLabel(exercise) {
 
 export function ExerciseAccordion({
   exercise,
+  recentHistory,
+  isLoadingHistory,
   isOpen,
   isSessionEditable,
   isWorkoutComplete,
@@ -54,6 +63,7 @@ export function ExerciseAccordion({
   onRemoveExercise,
   onUpdateExerciseStatus,
   onAddExerciseToTemplate,
+  onLoadHistory,
 }) {
   const [rows, setRows] = useState(() => buildRows(exercise));
   const inputRefs = useRef(new Map());
@@ -67,11 +77,17 @@ export function ExerciseAccordion({
   }, [exercise]);
 
   useEffect(() => {
+    if (isOpen && !isLoadingHistory && recentHistory.length === 0) {
+      void onLoadHistory();
+    }
+  }, [isLoadingHistory, isOpen, recentHistory.length, onLoadHistory]);
+
+  useEffect(() => {
     if (!isOpen || !isSessionEditable || isSkipped || isCompleted) {
       return;
     }
 
-    const nextIndex = rows.findIndex((row) => !row.saved);
+    const nextIndex = rows.findIndex((row) => !isRowCommitted(row));
     if (nextIndex < 0) {
       return;
     }
@@ -141,6 +157,11 @@ export function ExerciseAccordion({
             return {
               ...currentRow,
               saved: true,
+              savedValues: {
+                weight: row.weight,
+                reps: row.reps,
+                rir: row.rir,
+              },
               saving: false,
               error: '',
             };
@@ -180,6 +201,23 @@ export function ExerciseAccordion({
     if (field === 'reps') {
       focusField(rowIndex, 'rir');
       return;
+    }
+
+    if (!isRowComplete(rows[rowIndex])) {
+      if (rows[rowIndex].weight === '') {
+        focusField(rowIndex, 'weight');
+        return;
+      }
+
+      if (rows[rowIndex].reps === '') {
+        focusField(rowIndex, 'reps');
+        return;
+      }
+
+      if (rows[rowIndex].rir === '') {
+        focusField(rowIndex, 'rir');
+        return;
+      }
     }
 
     void handleSaveRow(rowIndex);
@@ -254,6 +292,42 @@ export function ExerciseAccordion({
             </p>
           ) : null}
 
+          <div className="mb-4 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              Recent history
+            </div>
+            {isLoadingHistory ? (
+              <p className="mt-2 text-sm text-atlas-slate">Loading recent sets...</p>
+            ) : recentHistory.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {recentHistory.map((entry, entryIndex) => (
+                  <div
+                    key={`${entry.date}:${entryIndex}`}
+                    className="rounded-2xl border border-atlas-line/80 bg-atlas-night px-3 py-3"
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                      {formatHistoryDate(entry.date)}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {entry.sets.map((set) => (
+                        <span
+                          key={`${entry.date}:${entryIndex}:${set.set_number}`}
+                          className="rounded-full border border-atlas-line px-3 py-1 text-xs text-atlas-ink"
+                        >
+                          S{set.set_number} {formatSetSummary(set, timeBased)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-atlas-slate">
+                No previous session data for this exercise yet.
+              </p>
+            )}
+          </div>
+
           <div className="mb-4 flex flex-wrap gap-2">
             {exercise.can_add_to_template && isWorkoutComplete ? (
               <button
@@ -294,36 +368,78 @@ export function ExerciseAccordion({
           </div>
 
           <div className="space-y-3">
-            {rows.map((row, rowIndex) => (
-              <SetRow
-                key={row.setNumber}
-                row={row}
-                disabled={!isSessionEditable || isSkipped}
-                timeBased={timeBased}
-                previousWeight={rowIndex > 0 ? rows[rowIndex - 1].weight : ''}
-                registerInput={(field, node) => registerInput(rowIndex, field, node)}
-                onChange={(field, value) => updateRow(rowIndex, { [field]: value, error: '' })}
-                onAdvance={(field) => handleAdvance(rowIndex, field)}
-                onApplyWeightDelta={(delta) => {
-                  const currentWeight = Number(row.weight || 0);
-                  const nextWeight = Number.isFinite(currentWeight)
-                    ? String((currentWeight + delta).toFixed(1).replace(/\.0$/, ''))
-                    : String(delta);
+            {rows.map((row, rowIndex) => {
+              const canEditRow =
+                isSessionEditable &&
+                !isSkipped &&
+                rows.slice(0, rowIndex).every(isRowCommitted);
+              const saveDisabled =
+                !canEditRow || row.saving || !isRowComplete(row) || isRowCommitted(row);
 
-                  updateRow(rowIndex, { weight: nextWeight, error: '' });
-                }}
-                onCopyPreviousWeight={() =>
-                  updateRow(rowIndex, {
-                    weight: rows[rowIndex - 1]?.weight || '',
-                    error: '',
-                  })
-                }
-                onSave={() => handleSaveRow(rowIndex)}
-              />
-            ))}
+              return (
+                <SetRow
+                  key={row.setNumber}
+                  row={row}
+                  disabled={!canEditRow}
+                  saveDisabled={saveDisabled}
+                  isCommitted={isRowCommitted(row)}
+                  timeBased={timeBased}
+                  previousWeight={rowIndex > 0 ? rows[rowIndex - 1].weight : ''}
+                  registerInput={(field, node) => registerInput(rowIndex, field, node)}
+                  onChange={(field, value) => updateRow(rowIndex, { [field]: value, error: '' })}
+                  onAdvance={(field) => handleAdvance(rowIndex, field)}
+                  onApplyWeightDelta={(delta) => {
+                    const currentWeight = Number(row.weight || 0);
+                    const nextWeight = Number.isFinite(currentWeight)
+                      ? String((currentWeight + delta).toFixed(1).replace(/\.0$/, ''))
+                      : String(delta);
+
+                    updateRow(rowIndex, { weight: nextWeight, error: '' });
+                  }}
+                  onCopyPreviousWeight={() =>
+                    updateRow(rowIndex, {
+                      weight: rows[rowIndex - 1]?.weight || '',
+                      error: '',
+                    })
+                  }
+                  onSave={() => handleSaveRow(rowIndex)}
+                />
+              );
+            })}
           </div>
         </div>
       ) : null}
     </article>
   );
+}
+
+function isRowComplete(row) {
+  return row.weight !== '' && row.reps !== '' && row.rir !== '';
+}
+
+function isRowCommitted(row) {
+  if (!row.saved || !row.savedValues) {
+    return false;
+  }
+
+  return (
+    String(row.savedValues.weight) === String(row.weight) &&
+    String(row.savedValues.reps) === String(row.reps) &&
+    String(row.savedValues.rir) === String(row.rir)
+  );
+}
+
+function formatHistoryDate(dateValue) {
+  return new Date(dateValue).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function formatSetSummary(set, timeBased) {
+  const repsLabel = timeBased ? `${set.reps ?? '-'} sec` : `${set.reps ?? '-'} reps`;
+  const weightLabel = `${set.weight ?? '-'} kg`;
+  const rirLabel = `RIR ${set.rir ?? '-'}`;
+
+  return `${weightLabel} - ${repsLabel} - ${rirLabel}`;
 }

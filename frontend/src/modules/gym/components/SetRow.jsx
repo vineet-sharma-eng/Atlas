@@ -40,6 +40,8 @@ function NumericField({
 export function SetRow({
   row,
   disabled,
+  saveDisabled,
+  isCommitted,
   previousWeight,
   timeBased,
   registerInput,
@@ -49,13 +51,23 @@ export function SetRow({
   onCopyPreviousWeight,
   onSave,
 }) {
-  const isEditable = !disabled && !row.saved && !row.saving;
+  const isEditable = !disabled && !row.saving;
+  const statusLabel = row.saving
+    ? 'Saving...'
+    : isCommitted
+      ? 'Saved'
+      : row.saved
+        ? 'Needs save'
+        : 'Ready to log';
+  const saveLabel = row.saving ? 'Saving...' : isCommitted ? 'Saved' : row.saved ? 'Update' : 'Save';
 
   return (
     <article
       className={`rounded-[22px] border px-4 py-4 ${
-        row.saved
+        isCommitted
           ? 'border-green-500/30 bg-green-500/10'
+          : row.saved
+            ? 'border-atlas-accent/40 bg-atlas-accentSoft/40'
           : 'border-atlas-line bg-atlas-panel'
       }`}
     >
@@ -65,21 +77,23 @@ export function SetRow({
             Set {row.setNumber}
           </div>
           <div className="mt-2 text-sm text-atlas-slate">
-            {row.saved ? 'Logged' : 'Ready to log'}
+            {statusLabel}
           </div>
         </div>
 
         <button
           type="button"
           className={`rounded-2xl px-4 py-2.5 text-sm font-medium ${
-            row.saved
+            isCommitted
               ? 'bg-green-500/15 text-green-200'
+              : row.saved
+                ? 'bg-atlas-accentSoft text-blue-100'
               : 'bg-atlas-accent text-white'
           }`}
           onClick={onSave}
-          disabled={disabled || row.saved || row.saving}
+          disabled={saveDisabled}
         >
-          {row.saved ? 'Saved' : row.saving ? 'Saving...' : 'Save'}
+          {saveLabel}
         </button>
       </div>
 

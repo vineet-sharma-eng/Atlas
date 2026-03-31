@@ -19,9 +19,17 @@ export function TemplateSelector({
   onStartSession,
 }) {
   const isSessionActive = session?.status === 'active';
+  const isCompletedToday = session?.status === 'completed' && session?.date === today;
   const sessionLabel = session
     ? `${session.status} - ${formatDate(session.date)}`
     : `Today - ${formatDate(today)}`;
+  const buttonLabel = isSessionActive
+    ? 'Active session loaded'
+    : isStartingSession
+      ? 'Starting...'
+      : isCompletedToday
+        ? 'Start another session'
+        : 'Start session';
 
   return (
     <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel">
@@ -74,7 +82,7 @@ export function TemplateSelector({
           disabled={!template || isLoadingSessionInit || isStartingSession || isSessionActive}
           onClick={onStartSession}
         >
-          {isSessionActive ? 'Active session loaded' : isStartingSession ? 'Starting...' : 'Start session'}
+          {buttonLabel}
         </button>
       </div>
     </section>

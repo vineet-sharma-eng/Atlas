@@ -177,6 +177,24 @@ async function ensureGymSchemaInternal() {
   `);
 
   await pool.query(`
+    WITH ranked_gym_sets AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          PARTITION BY exercise_id, set_number
+          ORDER BY updated_at DESC NULLS LAST, id DESC
+        ) AS row_number
+      FROM gym_sets
+    )
+    DELETE FROM gym_sets
+    WHERE id IN (
+      SELECT id
+      FROM ranked_gym_sets
+      WHERE row_number > 1
+    );
+  `);
+
+  await pool.query(`
     WITH normalized_order AS (
       SELECT
         id,
@@ -206,6 +224,11 @@ async function ensureGymSchemaInternal() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_template_sets_unique
     ON template_sets (template_exercise_id);
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_gym_sets_exercise_number
+    ON gym_sets (exercise_id, set_number);
   `);
 }
 
@@ -367,6 +390,24 @@ async function getLatestPreviousSession(templateId, currentSessionId = null) {
   return result.rows[0] || null;
 }
 
+async function getLatestSessionForDate(templateId, date) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      SELECT id, date, template_id, status, created_at, updated_at
+      FROM gym_sessions
+      WHERE template_id = $1
+        AND date = $2
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `,
+    [templateId, date],
+  );
+
+  return result.rows[0] || null;
+}
+
 async function createOrResumeSession({ templateId, date }) {
   await ensureGymSchema();
 
@@ -517,12 +558,18 @@ async function getActiveSessionState() {
   return getSessionState(activeSession);
 }
 
-async function getSessionInit({ templateId }) {
+async function getSessionInit({ templateId, date }) {
   await ensureGymSchema();
 
   const template = await getTemplateById(templateId);
   if (!template) {
     return null;
+  }
+
+  const todaySession = date ? await getLatestSessionForDate(templateId, date) : null;
+
+  if (todaySession) {
+    return getSessionState(todaySession);
   }
 
   const [templateExercises, previousSession] = await Promise.all([
@@ -694,38 +741,85 @@ function normalizeValue(value) {
 
 async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
   await ensureGymSchema();
-  await assertSessionIsActive(sessionId);
+  const normalizedExerciseName = String(exerciseName || '').trim();
 
-  const orderResult = await pool.query(
-    `
-      SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order
-      FROM gym_exercises
-      WHERE session_id = $1
-    `,
-    [sessionId],
-  );
+  if (!normalizedExerciseName) {
+    const error = new Error('Exercise name is required');
+    error.statusCode = 400;
+    throw error;
+  }
 
-  const orderIndex = Number(orderResult.rows[0].next_order || 1);
+  const client = await pool.connect();
 
-  const result = await pool.query(
-    `
-      INSERT INTO gym_exercises (session_id, exercise_name, muscle_group, order_index, status, updated_at)
-      VALUES ($1, $2, $3, $4, 'pending', NOW())
-      RETURNING id, session_id, exercise_name, muscle_group, order_index, status, updated_at
-    `,
-    [sessionId, exerciseName, muscleGroup || null, orderIndex],
-  );
+  try {
+    await client.query('BEGIN');
 
-  return {
-    session_exercise_id: result.rows[0].id,
-    session_id: result.rows[0].session_id,
-    exercise_name: result.rows[0].exercise_name,
-    muscle_group: result.rows[0].muscle_group,
-    order_index: Number(result.rows[0].order_index),
-    status: result.rows[0].status,
-    updated_at: result.rows[0].updated_at,
-    sets: [],
-  };
+    const sessionResult = await client.query(
+      `
+        SELECT id, status
+        FROM gym_sessions
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [sessionId],
+    );
+
+    if (sessionResult.rowCount === 0) {
+      const error = new Error('Gym session not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (sessionResult.rows[0].status !== 'active') {
+      const error = new Error('Session is not active');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const existingExerciseResult = await client.query(
+      `
+        SELECT id, session_id, exercise_name, muscle_group, order_index, status, updated_at
+        FROM gym_exercises
+        WHERE session_id = $1
+          AND LOWER(TRIM(exercise_name)) = LOWER(TRIM($2))
+        ORDER BY order_index ASC, id ASC
+        LIMIT 1
+      `,
+      [sessionId, normalizedExerciseName],
+    );
+
+    if (existingExerciseResult.rowCount > 0) {
+      await client.query('COMMIT');
+      return mapGymExerciseRow(existingExerciseResult.rows[0]);
+    }
+
+    const orderResult = await client.query(
+      `
+        SELECT COALESCE(MAX(order_index), 0) + 1 AS next_order
+        FROM gym_exercises
+        WHERE session_id = $1
+      `,
+      [sessionId],
+    );
+
+    const orderIndex = Number(orderResult.rows[0].next_order || 1);
+    const result = await client.query(
+      `
+        INSERT INTO gym_exercises (session_id, exercise_name, muscle_group, order_index, status, updated_at)
+        VALUES ($1, $2, $3, $4, 'pending', NOW())
+        RETURNING id, session_id, exercise_name, muscle_group, order_index, status, updated_at
+      `,
+      [sessionId, normalizedExerciseName, muscleGroup || null, orderIndex],
+    );
+
+    await client.query('COMMIT');
+    return mapGymExerciseRow(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function deleteGymExercise(exerciseId) {
@@ -986,6 +1080,44 @@ async function getExerciseHistory(exerciseName) {
   }));
 }
 
+async function listRecentExercises(limit = 12) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      WITH ranked_exercises AS (
+        SELECT
+          LOWER(TRIM(ge.exercise_name)) AS normalized_name,
+          ge.exercise_name,
+          ge.muscle_group,
+          MAX(COALESCE(ge.updated_at, gs.updated_at, gs.created_at)) AS last_used_at
+        FROM gym_exercises ge
+        JOIN gym_sessions gs ON gs.id = ge.session_id
+        GROUP BY LOWER(TRIM(ge.exercise_name)), ge.exercise_name, ge.muscle_group
+      ),
+      deduped_exercises AS (
+        SELECT DISTINCT ON (normalized_name)
+          exercise_name,
+          muscle_group,
+          last_used_at
+        FROM ranked_exercises
+        ORDER BY normalized_name ASC, last_used_at DESC, exercise_name ASC
+      )
+      SELECT exercise_name, muscle_group, last_used_at
+      FROM deduped_exercises
+      ORDER BY last_used_at DESC, exercise_name ASC
+      LIMIT $1
+    `,
+    [limit],
+  );
+
+  return result.rows.map((row) => ({
+    exercise_name: row.exercise_name,
+    muscle_group: row.muscle_group,
+    last_used_at: row.last_used_at,
+  }));
+}
+
 async function duplicateTemplate(templateId) {
   await ensureGymSchema();
 
@@ -1113,38 +1245,20 @@ async function saveGymSet({ exerciseId, setNumber, weight, reps, rir }) {
   await ensureGymSchema();
   await assertExerciseSessionIsActive(exerciseId);
 
-  const existingSetResult = await pool.query(
+  const result = await pool.query(
     `
-      SELECT id
-      FROM gym_sets
-      WHERE exercise_id = $1 AND set_number = $2
-      LIMIT 1
+      INSERT INTO gym_sets (exercise_id, set_number, weight, reps, rir, updated_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (exercise_id, set_number)
+      DO UPDATE SET
+        weight = EXCLUDED.weight,
+        reps = EXCLUDED.reps,
+        rir = EXCLUDED.rir,
+        updated_at = NOW()
+      RETURNING id, exercise_id, set_number, weight, reps, rir, updated_at
     `,
-    [exerciseId, setNumber],
+    [exerciseId, setNumber, weight, reps, rir],
   );
-
-  let result;
-
-  if (existingSetResult.rowCount > 0) {
-    result = await pool.query(
-      `
-        UPDATE gym_sets
-        SET weight = $3, reps = $4, rir = $5, updated_at = NOW()
-        WHERE exercise_id = $1 AND set_number = $2
-        RETURNING id, exercise_id, set_number, weight, reps, rir, updated_at
-      `,
-      [exerciseId, setNumber, weight, reps, rir],
-    );
-  } else {
-    result = await pool.query(
-      `
-        INSERT INTO gym_sets (exercise_id, set_number, weight, reps, rir, updated_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
-        RETURNING id, exercise_id, set_number, weight, reps, rir, updated_at
-      `,
-      [exerciseId, setNumber, weight, reps, rir],
-    );
-  }
 
   return {
     id: result.rows[0].id,
@@ -1154,6 +1268,19 @@ async function saveGymSet({ exerciseId, setNumber, weight, reps, rir }) {
     reps: result.rows[0].reps === null ? null : Number(result.rows[0].reps),
     rir: result.rows[0].rir === null ? null : Number(result.rows[0].rir),
     updated_at: result.rows[0].updated_at,
+  };
+}
+
+function mapGymExerciseRow(row) {
+  return {
+    session_exercise_id: row.id,
+    session_id: row.session_id,
+    exercise_name: row.exercise_name,
+    muscle_group: row.muscle_group,
+    order_index: Number(row.order_index),
+    status: row.status,
+    updated_at: row.updated_at,
+    sets: [],
   };
 }
 
@@ -1322,6 +1449,7 @@ module.exports = {
   reorderTemplateExercises,
   updateTemplateSet,
   getExerciseHistory,
+  listRecentExercises,
   duplicateTemplate,
   getExerciseProgress,
   saveGymSet,

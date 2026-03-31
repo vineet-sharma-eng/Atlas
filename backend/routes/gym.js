@@ -9,6 +9,7 @@ const {
   getExerciseHistoryHandler,
   getExerciseProgressHandler,
   getActiveSession,
+  listRecentExercisesHandler,
   getSessionDetail,
   initSession,
   listSessions,
@@ -25,6 +26,7 @@ const {
 const router = express.Router();
 
 router.get('/templates', listTemplates);
+router.get('/exercises/recent', listRecentExercisesHandler);
 router.get('/sessions', listSessions);
 router.get('/session/active', getActiveSession);
 router.get('/session/init/:template_id', initSession);
