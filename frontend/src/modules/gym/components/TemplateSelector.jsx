@@ -1,10 +1,4 @@
-function formatDate(dateValue) {
-  return new Date(dateValue).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
+import { formatLocalDate } from '../utils/formatters';
 
 export function TemplateSelector({
   templates,
@@ -21,8 +15,8 @@ export function TemplateSelector({
   const isSessionActive = session?.status === 'active';
   const isCompletedToday = session?.status === 'completed' && session?.date === today;
   const sessionLabel = session
-    ? `${session.status} - ${formatDate(session.date)}`
-    : `Today - ${formatDate(today)}`;
+    ? `${session.status} - ${formatLocalDate(session.date, { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : `Today - ${formatLocalDate(today, { day: 'numeric', month: 'short', year: 'numeric' })}`;
   const buttonLabel = isSessionActive
     ? 'Active session loaded'
     : isStartingSession

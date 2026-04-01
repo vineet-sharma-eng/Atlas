@@ -8,6 +8,7 @@
     font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     color: #f5f7fa;
     background: #0b0b0b;
+    scroll-behavior: smooth;
   }
 
   body {

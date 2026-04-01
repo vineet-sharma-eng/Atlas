@@ -1,169 +1,339 @@
+import { useEffect, useState } from 'react';
+import { formatExerciseName, formatLocalDate } from '../../utils/formatters';
+
 function formatMetric(value) {
   return value ?? '--';
 }
 
 export function SessionDetail({
   sessionDetail,
-  selectedExerciseName,
-  exerciseHistory,
-  exerciseProgress,
+  isOpen,
   isLoadingSessionDetail,
-  isLoadingExerciseHistory,
-  onSelectExercise,
+  pendingDeleteSessionId,
+  pendingDeleteSessionExerciseId,
+  exerciseInsightById,
+  loadingExerciseInsightById,
+  exerciseInsightErrorById,
+  onClose,
+  onDeleteSession,
+  onDeleteSessionExercise,
+  onLoadExerciseInsight,
 }) {
-  if (isLoadingSessionDetail) {
+  const [expandedExerciseIds, setExpandedExerciseIds] = useState({});
+
+  useEffect(() => {
+    setExpandedExerciseIds({});
+  }, [sessionDetail?.id]);
+
+  useEffect(() => {
+    if (!sessionDetail) {
+      return;
+    }
+
+    Object.entries(expandedExerciseIds).forEach(([sessionExerciseId, isExpanded]) => {
+      if (!isExpanded) {
+        return;
+      }
+
+      const exercise = sessionDetail.exercises.find(
+        (candidate) => candidate.session_exercise_id === Number(sessionExerciseId),
+      );
+
+      if (exercise?.effective_exercise_id) {
+        void onLoadExerciseInsight(exercise);
+      }
+    });
+  }, [expandedExerciseIds, onLoadExerciseInsight, sessionDetail]);
+
+  const detailContent = (
+    <section className="flex h-full flex-col rounded-[22px] border border-atlas-line/80 bg-atlas-panel shadow-panel">
+      {isLoadingSessionDetail ? (
+        <div className="p-6 text-sm text-atlas-slate">Loading session detail...</div>
+      ) : !sessionDetail ? (
+        <div className="p-6 text-sm text-atlas-slate">
+          Select a session to inspect exercises and logged sets.
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-3 border-b border-atlas-line/80 px-4 py-4">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
+                Session detail
+              </div>
+              <h3 className="mt-2 text-2xl font-semibold text-atlas-ink">{sessionDetail.template_name}</h3>
+              <div className="mt-2 text-sm text-atlas-slate">
+                {formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}
+                {' - '}
+                {sessionDetail.has_logged_sets ? `${sessionDetail.exercise_count} exercises` : 'No sets logged'}
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-2">
+              <button
+                type="button"
+                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 disabled:opacity-60"
+                disabled={pendingDeleteSessionId === sessionDetail.id}
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    `Delete ${sessionDetail.template_name} on ${formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}? This removes the entire session, all exercises, and all sets.`,
+                  );
+
+                  if (confirmed) {
+                    void onDeleteSession(sessionDetail.id).then(() => onClose());
+                  }
+                }}
+              >
+                {pendingDeleteSessionId === sessionDetail.id ? 'Deleting...' : 'Delete session'}
+              </button>
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink md:hidden"
+                onClick={onClose}
+              >
+                Back
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            {sessionDetail.exercises.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-mist px-4 py-5 text-sm text-atlas-slate">
+                No exercises logged in this session.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sessionDetail.exercises.map((exercise) => {
+                  const isExpanded = expandedExerciseIds[exercise.session_exercise_id] === true;
+                  const insightKey = getExerciseInsightKey(exercise, sessionDetail.template_id);
+
+                  return (
+                    <article
+                      key={exercise.session_exercise_id}
+                      className="rounded-[22px] border border-atlas-line/80 bg-atlas-night px-4 py-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() =>
+                            setExpandedExerciseIds((current) => ({
+                              ...current,
+                              [exercise.session_exercise_id]: !isExpanded,
+                            }))
+                          }
+                        >
+                          <div className={`${isExpanded ? 'whitespace-normal' : 'truncate'} text-lg font-semibold text-atlas-ink`}>
+                            {formatExerciseName(exercise.exercise_name)}
+                          </div>
+                          <div className="mt-2 text-xs uppercase tracking-[0.14em] text-atlas-slate">
+                            {exercise.muscle_group || 'Accessory'}
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 disabled:opacity-60"
+                          disabled={pendingDeleteSessionExerciseId === exercise.session_exercise_id}
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Delete ${formatExerciseName(exercise.exercise_name)} from this session? This removes the exercise and all of its sets from history.`,
+                            );
+
+                            if (confirmed) {
+                              void onDeleteSessionExercise(exercise.session_exercise_id);
+                            }
+                          }}
+                        >
+                          {pendingDeleteSessionExerciseId === exercise.session_exercise_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="mt-4 space-y-3">
+                          <ExerciseInsightPanel
+                            exercise={exercise}
+                            insight={exerciseInsightById[insightKey] || null}
+                            isLoading={loadingExerciseInsightById[insightKey] === true}
+                            error={exerciseInsightErrorById[insightKey] || ''}
+                          />
+
+                          {exercise.sets.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
+                              No sets logged.
+                            </div>
+                          ) : (
+                            exercise.sets.map((set) => (
+                              <div
+                                key={set.id}
+                                className="rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-3 text-sm"
+                              >
+                                {set.logged_exercise_name
+                                  && Number(set.logged_exercise_id || 0) !== Number(exercise.effective_exercise_id || 0) ? (
+                                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                                    Logged as {formatExerciseName(set.logged_exercise_name)}
+                                  </div>
+                                ) : null}
+                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                  <Metric label="Set" value={set.set_number} />
+                                  <Metric label="Weight" value={formatMetric(set.weight)} />
+                                  <Metric label="Reps" value={formatMetric(set.reps)} />
+                                  <Metric label="RIR" value={formatMetric(set.rir)} />
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+
+  return (
+    <>
+      <div className="hidden md:block">
+        {detailContent}
+      </div>
+
+      {isOpen ? (
+        <div className="fixed inset-0 z-40 bg-black/45 md:hidden">
+          <button
+            type="button"
+            aria-label="Close history detail"
+            className="absolute inset-0"
+            onClick={onClose}
+          />
+          <div className="absolute inset-y-0 right-0 w-full max-w-xl p-3">
+            <div className="h-full overflow-hidden rounded-[24px]">
+              {detailContent}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">{label}</div>
+      <div className="mt-1 font-semibold text-atlas-ink">{value}</div>
+    </div>
+  );
+}
+
+function ExerciseInsightPanel({ exercise, insight, isLoading, error }) {
+  if (isLoading) {
     return (
-      <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-6 text-sm text-atlas-slate shadow-panel">
-        Loading session detail...
-      </section>
+      <div className="rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
+        Loading recent progress...
+      </div>
     );
   }
 
-  if (!sessionDetail) {
+  if (error) {
     return (
-      <section className="rounded-[22px] border border-dashed border-atlas-line bg-atlas-panel p-6 text-sm text-atlas-slate shadow-panel">
-        Select a session to inspect exercises and logged sets.
-      </section>
+      <div className="rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
+        {error}
+      </div>
+    );
+  }
+
+  const progress = Array.isArray(insight?.progress) ? insight.progress : [];
+  const historyByDate = groupHistoryByDate(Array.isArray(insight?.history) ? insight.history : []);
+
+  if (progress.length === 0 && historyByDate.length === 0) {
+    return (
+      <div className="rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
+        No prior progress for {formatExerciseName(exercise.exercise_name)} yet.
+      </div>
     );
   }
 
   return (
-    <section className="space-y-4">
-      <div className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-          Session detail
+    <div className="grid gap-3 lg:grid-cols-2">
+      <div className="rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-4">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+          Recent progress
         </div>
-        <h3 className="mt-2 text-2xl font-semibold text-atlas-ink">{sessionDetail.template_name}</h3>
-        <div className="mt-2 inline-flex rounded-full border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-slate">
-          {sessionDetail.date} - <span className="ml-1 capitalize">{sessionDetail.status}</span>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {sessionDetail.exercises.map((exercise) => (
-          <article
-            key={exercise.session_exercise_id}
-            className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel"
-          >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h4 className="text-lg font-semibold capitalize text-atlas-ink">
-                  {exercise.exercise_name.replaceAll('_', ' ')}
-                </h4>
-                <div className="mt-2 text-xs uppercase tracking-[0.14em] text-atlas-slate">
-                  {exercise.muscle_group || 'Accessory'}
+        <div className="mt-3 space-y-2">
+          {progress.length === 0 ? (
+            <div className="text-sm text-atlas-slate">No previous sessions.</div>
+          ) : (
+            progress.map((entry) => (
+              <div key={entry.session_id} className="rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-sm">
+                <div className="font-semibold text-atlas-ink">
+                  {formatLocalDate(entry.date, { month: 'short', day: 'numeric', year: 'numeric' })}
+                </div>
+                <div className="mt-2 text-atlas-slate">
+                  {entry.set_count} sets - {Math.round(entry.total_volume)} volume
+                </div>
+                <div className="mt-1 text-atlas-slate">
+                  Best set {entry.best_weight ?? '-'} kg x {entry.best_reps ?? '-'}
                 </div>
               </div>
-              <button
-                type="button"
-                className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm text-atlas-ink"
-                onClick={() => onSelectExercise(exercise.exercise_name)}
-              >
-                View history
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              {exercise.sets.map((set) => (
-                <div
-                  key={set.id}
-                  className="grid grid-cols-2 gap-2 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3 text-sm sm:grid-cols-4"
-                >
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Set</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{set.set_number}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Weight</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(set.weight)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Reps</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(set.reps)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">RIR</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(set.rir)}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-        ))}
+            ))
+          )}
+        </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-            Exercise history
-          </div>
-          <h4 className="mt-2 text-lg font-semibold capitalize text-atlas-ink">
-            {selectedExerciseName ? selectedExerciseName.replaceAll('_', ' ') : 'Select an exercise'}
-          </h4>
-
-          {isLoadingExerciseHistory ? (
-            <div className="mt-4 text-sm text-atlas-slate">Loading exercise history...</div>
-          ) : exerciseHistory.length === 0 ? (
-            <div className="mt-4 text-sm text-atlas-slate">No prior history for this exercise.</div>
+      <div className="rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-4">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+          Previous history
+        </div>
+        <div className="mt-3 space-y-2">
+          {historyByDate.length === 0 ? (
+            <div className="text-sm text-atlas-slate">No previous set history.</div>
           ) : (
-            <div className="mt-4 space-y-2">
-              {exerciseHistory.map((row, index) => (
-                <div
-                  key={`${row.exercise_id}-${row.set_number}-${index}`}
-                  className="grid grid-cols-2 gap-2 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3 text-sm sm:grid-cols-[1.1fr_repeat(4,minmax(0,1fr))]"
-                >
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Date</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{row.date}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Set</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{row.set_number}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Weight</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(row.weight)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">Reps</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(row.reps)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">RIR</div>
-                    <div className="mt-1 font-semibold text-atlas-ink">{formatMetric(row.rir)}</div>
-                  </div>
+            historyByDate.map((entry) => (
+              <div key={entry.date} className="rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-sm">
+                <div className="font-semibold text-atlas-ink">
+                  {formatLocalDate(entry.date, { month: 'short', day: 'numeric', year: 'numeric' })}
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-4 shadow-panel">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-            Last 3 sessions
-          </div>
-          <h4 className="mt-2 text-lg font-semibold capitalize text-atlas-ink">
-            Progress snapshot
-          </h4>
-
-          {isLoadingExerciseHistory ? (
-            <div className="mt-4 text-sm text-atlas-slate">Loading progress...</div>
-          ) : exerciseProgress.length === 0 ? (
-            <div className="mt-4 text-sm text-atlas-slate">No progress rows available yet.</div>
-          ) : (
-            <div className="mt-4 space-y-2">
-              {exerciseProgress.map((row, index) => (
-                <div key={`${row.date}-${index}`} className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-atlas-slate">{row.date}</div>
-                  <div className="mt-2 text-sm font-medium text-atlas-ink">
-                    Weight {formatMetric(row.weight)} - Reps {formatMetric(row.reps)}
-                  </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {entry.sets.map((set) => (
+                    <span key={`${entry.date}:${set.set_number}`} className="rounded-full border border-atlas-line px-3 py-1 text-xs text-atlas-ink">
+                      S{set.set_number} {set.weight ?? '-'} kg x {set.reps ?? '-'}
+                    </span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))
           )}
-        </section>
+        </div>
       </div>
-    </section>
+    </div>
   );
+}
+
+function groupHistoryByDate(rows) {
+  const groupedRows = new Map();
+
+  rows.forEach((row) => {
+    const currentRows = groupedRows.get(row.date) || [];
+    currentRows.push(row);
+    groupedRows.set(row.date, currentRows);
+  });
+
+  return Array.from(groupedRows.entries()).map(([date, sets]) => ({
+    date,
+    sets: [...sets].sort((left, right) => left.set_number - right.set_number),
+  }));
+}
+
+function getExerciseInsightKey(exercise, templateId) {
+  const exerciseId = Number(exercise?.effective_exercise_id || 0);
+
+  if (!exerciseId) {
+    return '';
+  }
+
+  const templateScopeId = exercise?.template_exercise_id && templateId ? Number(templateId) : null;
+  return `${exerciseId}:${templateScopeId || 'all'}`;
 }

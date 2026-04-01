@@ -6,7 +6,7 @@ export function GymTrackingPage() {
   const workoutSession = useWorkoutSession();
 
   return (
-    <main className="min-h-screen px-3 py-3 pb-28 sm:px-4">
+    <main className="min-h-screen px-3 py-3 pb-24 sm:px-4">
       <div className="mx-auto flex max-w-5xl flex-col gap-4">
         <header className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-atlas-slate">
@@ -16,7 +16,7 @@ export function GymTrackingPage() {
             Fast logging
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-atlas-slate">
-            Built for short rests, big buttons, and quick set entry with history-based defaults.
+            Compact mobile logging with slot-specific alternates and previous-day history only.
           </p>
         </header>
 
@@ -42,18 +42,22 @@ export function GymTrackingPage() {
         <WorkoutView
           template={workoutSession.template}
           session={workoutSession.session}
+          today={workoutSession.today}
           exercises={workoutSession.exercises}
           openExerciseId={workoutSession.openExerciseId}
           availableMuscleGroups={workoutSession.availableMuscleGroups}
           suggestedExercises={workoutSession.suggestedExercises}
           sessionSummary={workoutSession.sessionSummary}
-          exerciseHistoryByName={workoutSession.exerciseHistoryByName}
-          loadingExerciseHistoryByName={workoutSession.loadingExerciseHistoryByName}
+          exerciseHistoryByKey={workoutSession.exerciseHistoryByKey}
+          loadingExerciseHistoryByKey={workoutSession.loadingExerciseHistoryByKey}
+          exerciseHistoryErrorByKey={workoutSession.exerciseHistoryErrorByKey}
           isLoading={workoutSession.isLoadingSessionInit}
           isAddingExercise={workoutSession.isAddingExercise}
           isEndingSession={workoutSession.isEndingSession}
           isSessionEditable={workoutSession.isSessionEditable}
           isWorkoutComplete={workoutSession.isWorkoutComplete}
+          exerciseCatalog={workoutSession.exerciseCatalog}
+          isLoadingExerciseCatalog={workoutSession.isLoadingExerciseCatalog}
           onOpenExercise={workoutSession.setOpenExerciseId}
           onAddExercise={workoutSession.addExercise}
           onRemoveExercise={workoutSession.removeExercise}
@@ -62,6 +66,10 @@ export function GymTrackingPage() {
           onEndSession={workoutSession.endSession}
           onAddExerciseToTemplate={workoutSession.addSessionExerciseToTemplate}
           onLoadExerciseHistory={workoutSession.loadExerciseHistory}
+          onLoadAlternates={workoutSession.loadAlternates}
+          onSearchExerciseCatalog={workoutSession.searchExerciseCatalog}
+          onCreateAlternate={workoutSession.createAlternate}
+          onSwapExercise={workoutSession.swapExercise}
         />
       </div>
     </main>

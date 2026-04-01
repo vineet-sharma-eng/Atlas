@@ -7,7 +7,9 @@ export function TemplateEditor({
   isDuplicatingTemplate,
   pendingExerciseActionId,
   pendingTemplateSetId,
+  pendingRenameExerciseId,
   onRenameTemplate,
+  onRenameExercise,
   onDuplicateTemplate,
   onMoveExercise,
   onToggleExercise,
@@ -84,8 +86,10 @@ export function TemplateEditor({
               exercise={exercise}
               isPending={pendingExerciseActionId === exercise.template_exercise_id}
               isSavingSet={pendingTemplateSetId === exercise.template_set_id}
+              isRenaming={pendingRenameExerciseId === exercise.exercise_id}
               onMoveExercise={onMoveExercise}
               onToggleExercise={onToggleExercise}
+              onRenameExercise={onRenameExercise}
               onSaveSet={onSaveSet}
             />
           ))}

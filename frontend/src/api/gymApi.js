@@ -1,9 +1,12 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 async function request(path, options = {}) {
+  const userTimeZone = getUserTimeZone();
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Timezone': userTimeZone,
       ...(options.headers || {}),
     },
     ...options,
@@ -19,8 +22,13 @@ async function request(path, options = {}) {
       typeof payload === 'object' && payload !== null && 'error' in payload
         ? payload.error
         : 'Request failed';
+    const error = new Error(message);
 
-    throw new Error(message);
+    if (typeof payload === 'object' && payload !== null) {
+      error.data = payload;
+    }
+
+    throw error;
   }
 
   return payload;
@@ -28,6 +36,17 @@ async function request(path, options = {}) {
 
 export function getGymTemplates() {
   return request('/gym/templates');
+}
+
+export function getGymExercises(search = '', limit = 50) {
+  const params = new URLSearchParams();
+
+  if (search) {
+    params.set('search', search);
+  }
+
+  params.set('limit', String(limit));
+  return request(`/gym/exercises?${params.toString()}`);
 }
 
 export function getRecentGymExercises(limit = 12) {
@@ -39,6 +58,13 @@ export function updateGymTemplateName(templateId, name) {
   return request(`/gym/template/${templateId}`, {
     method: 'PATCH',
     body: JSON.stringify({ name }),
+  });
+}
+
+export function renameGymExercise(exerciseId, payload) {
+  return request(`/gym/exercises/${exerciseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
   });
 }
 
@@ -72,15 +98,8 @@ export function getActiveGymSession() {
   return request('/gym/session/active');
 }
 
-export function getGymSessionInit(templateId, date) {
-  const params = new URLSearchParams();
-
-  if (date) {
-    params.set('date', date);
-  }
-
-  const query = params.toString();
-  return request(`/gym/session/init/${templateId}${query ? `?${query}` : ''}`);
+export function getGymSessionInit(templateId) {
+  return request(`/gym/session/init/${templateId}`);
 }
 
 export function getGymSessions() {
@@ -91,12 +110,11 @@ export function getGymSessionDetail(sessionId) {
   return request(`/gym/session/${sessionId}`);
 }
 
-export function startGymSession({ templateId, date }) {
+export function startGymSession({ templateId }) {
   return request('/gym/session/start', {
     method: 'POST',
     body: JSON.stringify({
       template_id: templateId,
-      date,
     }),
   });
 }
@@ -107,6 +125,12 @@ export function endGymSession(sessionId) {
     body: JSON.stringify({
       session_id: sessionId,
     }),
+  });
+}
+
+export function deleteGymSessionHistory(sessionId) {
+  return request(`/gym/session/${sessionId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -127,10 +151,23 @@ export function deleteGymExercise(exerciseId) {
   });
 }
 
+export function deleteGymSessionExerciseHistory(sessionExerciseId) {
+  return request(`/gym/session-exercise/${sessionExerciseId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function updateGymExerciseStatus(exerciseId, status) {
   return request(`/gym/exercise/${exerciseId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
+  });
+}
+
+export function updateGymSessionExerciseOverride(sessionExerciseId, payload) {
+  return request(`/gym/session-exercise/${sessionExerciseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
   });
 }
 
@@ -158,10 +195,51 @@ export function addExerciseToTemplate({ templateId, exerciseName, muscleGroup })
   });
 }
 
-export function getGymExerciseHistory(exerciseName) {
-  return request(`/gym/exercise/${encodeURIComponent(exerciseName)}/history`);
+export function getGymTemplateExerciseAlternates(templateExerciseId) {
+  return request(`/gym/template/exercise/${templateExerciseId}/alternates`);
 }
 
-export function getGymExerciseProgress(exerciseName) {
-  return request(`/gym/exercise/${encodeURIComponent(exerciseName)}/progress`);
+export function createGymTemplateExerciseAlternate(templateExerciseId, payload) {
+  return request(`/gym/template/exercise/${templateExerciseId}/alternates`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getGymExerciseHistory(exerciseId, { beforeDate, templateId, limit = 3 } = {}) {
+  const params = new URLSearchParams();
+
+  if (beforeDate) {
+    params.set('before_date', beforeDate);
+  }
+
+  if (templateId) {
+    params.set('template_id', String(templateId));
+  }
+
+  params.set('limit', String(limit));
+  return request(`/gym/exercises/${exerciseId}/history?${params.toString()}`);
+}
+
+export function getGymExerciseProgress(exerciseId, { beforeDate, templateId, limit = 3 } = {}) {
+  const params = new URLSearchParams();
+
+  if (beforeDate) {
+    params.set('before_date', beforeDate);
+  }
+
+  if (templateId) {
+    params.set('template_id', String(templateId));
+  }
+
+  params.set('limit', String(limit));
+  return request(`/gym/exercises/${exerciseId}/progress?${params.toString()}`);
+}
+
+function getUserTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (_) {
+    return 'UTC';
+  }
 }

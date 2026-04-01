@@ -1,3 +1,5 @@
+import { formatExerciseName } from '../../utils/formatters';
+
 export function TemplateList({
   templates,
   selectedTemplateId,
@@ -28,7 +30,7 @@ export function TemplateList({
             const hiddenCount = template.exercises.filter((exercise) => !exercise.is_active).length;
             const exercisePreview = template.exercises
               .slice(0, 4)
-              .map((exercise) => exercise.exercise_name.replaceAll('_', ' '))
+              .map((exercise) => formatExerciseName(exercise.exercise_name))
               .join(', ');
 
             return (

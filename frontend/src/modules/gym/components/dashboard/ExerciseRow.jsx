@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { formatExerciseName } from '../../utils/formatters';
 
 const INITIAL_FORM_STATE = {
+  name: '',
   targetSets: '',
   repMin: '',
   repMax: '',
@@ -10,14 +12,17 @@ export function ExerciseRow({
   exercise,
   isPending,
   isSavingSet,
+  isRenaming,
   onMoveExercise,
   onToggleExercise,
+  onRenameExercise,
   onSaveSet,
 }) {
   const [formValues, setFormValues] = useState(INITIAL_FORM_STATE);
 
   useEffect(() => {
     setFormValues({
+      name: formatExerciseName(exercise.exercise_name || ''),
       targetSets: String(exercise.target_sets ?? ''),
       repMin: exercise.rep_min === null ? '' : String(exercise.rep_min),
       repMax: exercise.rep_max === null ? '' : String(exercise.rep_max),
@@ -43,52 +48,73 @@ export function ExerciseRow({
       }`}
     >
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-lg font-semibold capitalize text-atlas-ink">
-                {exercise.exercise_name.replaceAll('_', ' ')}
-              </h4>
-              <span
-                className={`rounded-full px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
-                  exercise.is_active
-                    ? 'bg-green-500/15 text-green-200'
-                    : 'bg-zinc-700 text-zinc-200'
-                }`}
-              >
-                {exercise.is_active ? 'Active' : 'Hidden'}
-              </span>
-            </div>
-            <div className="mt-2 text-sm uppercase tracking-[0.14em] text-atlas-slate">
-              {exercise.muscle_group || 'Accessory'}
-            </div>
-          </div>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
+                    exercise.is_active
+                      ? 'bg-green-500/15 text-green-200'
+                      : 'bg-zinc-700 text-zinc-200'
+                  }`}
+                >
+                  {exercise.is_active ? 'Active' : 'Hidden'}
+                </span>
+                <span className="text-sm uppercase tracking-[0.14em] text-atlas-slate">
+                  {exercise.muscle_group || 'Accessory'}
+                </span>
+              </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
-              disabled={isPending}
-              onClick={() => onMoveExercise(exercise.template_exercise_id, 'up')}
-            >
-              Up
-            </button>
-            <button
-              type="button"
-              className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
-              disabled={isPending}
-              onClick={() => onMoveExercise(exercise.template_exercise_id, 'down')}
-            >
-              Down
-            </button>
-            <button
-              type="button"
-              className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
-              disabled={isPending}
-              onClick={() => onToggleExercise(exercise.template_exercise_id)}
-            >
-              {exercise.is_active ? 'Hide' : 'Show'}
-            </button>
+              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_140px]">
+                <input
+                  className="w-full rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-base text-atlas-ink"
+                  type="text"
+                  value={formValues.name}
+                  onChange={(event) =>
+                    setFormValues((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink disabled:opacity-60"
+                  disabled={isRenaming || formValues.name.trim() === ''}
+                  onClick={() => onRenameExercise(exercise.exercise_id, { name: formValues.name.trim() })}
+                >
+                  {isRenaming ? 'Saving...' : 'Rename'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
+                disabled={isPending}
+                onClick={() => onMoveExercise(exercise.template_exercise_id, 'up')}
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
+                disabled={isPending}
+                onClick={() => onMoveExercise(exercise.template_exercise_id, 'down')}
+              >
+                Down
+              </button>
+              <button
+                type="button"
+                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink disabled:opacity-50"
+                disabled={isPending}
+                onClick={() => onToggleExercise(exercise.template_exercise_id)}
+              >
+                {exercise.is_active ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </div>
         </div>
 

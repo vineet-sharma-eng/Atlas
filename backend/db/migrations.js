@@ -1,11 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
+const pool = require('./pool');
+const { runMigrations } = require('./migrationRunner');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const shouldSeed = process.argv.includes('--seed') || process.env.DB_SETUP_SEED === 'true';
+const MIGRATIONS_DIR = path.join(__dirname, 'sql-migrations');
 
 async function run() {
   const client = await pool.connect();
@@ -13,24 +12,44 @@ async function run() {
   try {
     console.log('Connected');
 
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    const seedPath = path.join(__dirname, 'seed.sql');
+    console.log('Running migrations...');
+    await runMigrations({ client });
 
-    const schemaSQL = fs.readFileSync(schemaPath, 'utf-8');
-    const seedSQL = fs.readFileSync(seedPath, 'utf-8');
+    if (shouldSeed) {
+      const seedPath = path.join(__dirname, 'seed.sql');
+      const seedSQL = fs.readFileSync(seedPath, 'utf-8');
 
-    console.log('Running schema...');
-    await client.query(schemaSQL);
+      console.log('Running seed...');
+      await client.query(seedSQL);
 
-    console.log('Running seed...');
-    await client.query(seedSQL);
+      // Seed inserts legacy exercise_name rows after schema migrations have
+      // already been marked as applied. Re-run the SQL bodies without touching
+      // schema_migrations so fresh databases get the same reconciliation and
+      // exercise-id backfill as existing databases.
+      console.log('Reconciling seeded data...');
+      await rerunMigrationBodies(client);
+    } else {
+      console.log('Skipping seed (use --seed or DB_SETUP_SEED=true to include demo data).');
+    }
 
-    console.log('✅ Done');
-  } catch (err) {
-    console.error('❌ Error:', err);
+    console.log('Done');
+    process.exitCode = 0;
+  } catch (error) {
+    console.error('Error:', error);
+    process.exitCode = 1;
   } finally {
     client.release();
-    process.exit();
+  }
+}
+
+async function rerunMigrationBodies(client) {
+  const fileNames = fs.readdirSync(MIGRATIONS_DIR)
+    .filter((fileName) => fileName.endsWith('.sql'))
+    .sort((left, right) => left.localeCompare(right));
+
+  for (const fileName of fileNames) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, fileName), 'utf8');
+    await client.query(sql);
   }
 }
 

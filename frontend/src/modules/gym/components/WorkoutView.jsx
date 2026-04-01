@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { BottomSheet } from './BottomSheet';
 import { ExerciseAccordion } from './ExerciseAccordion';
+import { formatExerciseName, formatLocalDate } from '../utils/formatters';
 
 const INITIAL_EXERCISE_FORM = {
   exerciseName: '',
@@ -9,18 +11,22 @@ const INITIAL_EXERCISE_FORM = {
 export function WorkoutView({
   template,
   session,
+  today,
   exercises,
   openExerciseId,
   availableMuscleGroups,
   suggestedExercises,
   sessionSummary,
-  exerciseHistoryByName,
-  loadingExerciseHistoryByName,
+  exerciseHistoryByKey,
+  loadingExerciseHistoryByKey,
+  exerciseHistoryErrorByKey,
   isLoading,
   isAddingExercise,
   isEndingSession,
   isSessionEditable,
   isWorkoutComplete,
+  exerciseCatalog,
+  isLoadingExerciseCatalog,
   onOpenExercise,
   onAddExercise,
   onRemoveExercise,
@@ -29,13 +35,18 @@ export function WorkoutView({
   onEndSession,
   onAddExerciseToTemplate,
   onLoadExerciseHistory,
+  onLoadAlternates,
+  onSearchExerciseCatalog,
+  onCreateAlternate,
+  onSwapExercise,
 }) {
   const [formValues, setFormValues] = useState(INITIAL_EXERCISE_FORM);
-  const [showAddExerciseForm, setShowAddExerciseForm] = useState(false);
+  const [showAddExerciseSheet, setShowAddExerciseSheet] = useState(false);
+  const [showSessionActions, setShowSessionActions] = useState(false);
   const [showEndSessionReview, setShowEndSessionReview] = useState(false);
+  const elapsedLabel = useSessionTimerLabel(session?.started_at, session?.ended_at);
   const progressLabel = `${sessionSummary.completed + sessionSummary.skipped}/${sessionSummary.total || 0}`;
   const unresolvedExercises = sessionSummary.unresolvedExercises;
-
   const suggestionButtons = useMemo(
     () => suggestedExercises.slice(0, 6),
     [suggestedExercises],
@@ -43,10 +54,16 @@ export function WorkoutView({
 
   useEffect(() => {
     if (!isSessionEditable) {
-      setShowAddExerciseForm(false);
+      setShowAddExerciseSheet(false);
+      setShowSessionActions(false);
       setShowEndSessionReview(false);
     }
   }, [isSessionEditable]);
+
+  function handleOpenExercise(exerciseId) {
+    onOpenExercise(exerciseId);
+    setShowEndSessionReview(false);
+  }
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -63,7 +80,7 @@ export function WorkoutView({
       .then((didAddExercise) => {
         if (didAddExercise) {
           setFormValues(INITIAL_EXERCISE_FORM);
-          setShowAddExerciseForm(false);
+          setShowAddExerciseSheet(false);
         }
       })
       .catch(() => {});
@@ -80,21 +97,12 @@ export function WorkoutView({
     }).catch(() => {});
   }
 
-  function handleOpenExercise(exerciseId) {
-    onOpenExercise(exerciseId);
-    setShowEndSessionReview(false);
-  }
-
   async function handleConfirmEndSession() {
-    try {
-      const didEndSession = await onEndSession();
-      if (!didEndSession) {
-        return;
-      }
+    const didEndSession = await onEndSession();
 
+    if (didEndSession) {
       setShowEndSessionReview(false);
-    } catch (_) {
-      // Error surface already lives in the shared page state.
+      setShowSessionActions(false);
     }
   }
 
@@ -115,126 +123,43 @@ export function WorkoutView({
   }
 
   return (
-    <section className="space-y-4">
-      <div className="sticky top-[69px] z-10 space-y-3 rounded-[22px] border border-atlas-line/80 bg-atlas-panel/95 px-4 py-4 shadow-panel backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
+    <section className="space-y-3">
+      <div className="sticky top-2 z-10 rounded-[20px] border border-atlas-line/80 bg-atlas-panel/95 px-3 shadow-panel backdrop-blur">
+        <div className="flex h-11 items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-              {session ? `Session - ${session.status}` : 'Template preview'}
+            <div className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              {template.day || formatWorkoutDay(today)}
             </div>
-            <h2 className="mt-2 truncate text-xl font-semibold text-atlas-ink">
+            <div className="truncate text-sm font-semibold text-atlas-ink">
               {template.name}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-atlas-slate">
-              {session
-                ? isSessionEditable
-                  ? `${sessionSummary.pending} pending. One movement stays open so logging stays fast.`
-                  : 'Workout completed. Logging is locked.'
-                : 'Load the structure, then start the session to begin logging.'}
-            </p>
+            </div>
           </div>
-
-          {session && isSessionEditable ? (
+          <div className="flex items-center gap-2">
+            <div className="rounded-full border border-atlas-line bg-atlas-night px-2.5 py-1 text-xs font-semibold text-atlas-slate">
+              {session ? elapsedLabel : 'Preview'}
+            </div>
             <button
               type="button"
-              className="min-h-11 shrink-0 rounded-2xl bg-red-500 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-              disabled={isEndingSession}
-              onClick={() => setShowEndSessionReview((currentValue) => !currentValue)}
+              aria-label="Session actions"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-atlas-line bg-atlas-mist text-atlas-ink"
+              onClick={() => setShowSessionActions(true)}
             >
-              {showEndSessionReview ? 'Close review' : 'End workout'}
+              ...
             </button>
-          ) : null}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <SummaryChip label="Progress" value={progressLabel} tone="default" />
-          <SummaryChip label="Completed" value={String(sessionSummary.completed)} tone="completed" />
-          <SummaryChip label="Skipped" value={String(sessionSummary.skipped)} tone="skipped" />
-          <SummaryChip label="Pending" value={String(sessionSummary.pending)} tone="active" />
+          </div>
         </div>
       </div>
 
-      {showEndSessionReview && session && isSessionEditable ? (
-        <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-                Finish workout
-              </div>
-              <h3 className="mt-2 text-lg font-semibold text-atlas-ink">Review before lock</h3>
-              <p className="mt-2 text-sm leading-6 text-atlas-slate">
-                Completed and skipped work will be saved as-is. Pending exercises stay unfinished if you end now.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-atlas-line bg-atlas-night px-3 py-2 text-sm text-atlas-ink">
-              {sessionSummary.percentComplete}% done
-            </div>
-          </div>
-
-          {unresolvedExercises.length > 0 ? (
-            <div className="mt-4 space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-                Pending exercises
-              </div>
-              {unresolvedExercises.map((exercise) => {
-                const exerciseId = exercise.session_exercise_id || exercise.template_exercise_id;
-
-                return (
-                  <button
-                    key={exerciseId}
-                    type="button"
-                    className="flex min-h-11 w-full items-center justify-between rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-left"
-                    onClick={() => handleOpenExercise(exerciseId)}
-                  >
-                    <div>
-                      <div className="text-sm font-medium capitalize text-atlas-ink">
-                        {exercise.exercise_name.replaceAll('_', ' ')}
-                      </div>
-                      <div className="mt-1 text-xs text-atlas-slate">
-                        {exercise.target_sets} sets
-                        {exercise.rep_min !== null && exercise.rep_max !== null
-                          ? ` x ${exercise.rep_min}-${exercise.rep_max}`
-                          : ' x AMRAP'}
-                      </div>
-                    </div>
-                    <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-200">
-                      Open
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-2xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-200">
-              Everything in this session is resolved. You can end the workout now.
-            </div>
-          )}
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className="min-h-11 rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink"
-              onClick={() => setShowEndSessionReview(false)}
-            >
-              Keep logging
-            </button>
-            <button
-              type="button"
-              className="min-h-11 rounded-2xl bg-red-500 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-              disabled={isEndingSession}
-              onClick={() => {
-                void handleConfirmEndSession();
-              }}
-            >
-              {isEndingSession ? 'Ending...' : 'Confirm end'}
-            </button>
-          </div>
-        </section>
-      ) : null}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <SummaryChip label="Progress" value={progressLabel} tone="default" />
+        <SummaryChip label="Completed" value={String(sessionSummary.completed)} tone="completed" />
+        <SummaryChip label="Skipped" value={String(sessionSummary.skipped)} tone="skipped" />
+        <SummaryChip label="Pending" value={String(sessionSummary.pending)} tone="active" />
+      </div>
 
       {!isSessionEditable && session ? (
         <div className="rounded-2xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-200">
-          Workout Completed
+          Workout completed. Logging is locked.
         </div>
       ) : null}
 
@@ -246,130 +171,247 @@ export function WorkoutView({
         <div className="space-y-3">
           {exercises.map((exercise) => {
             const exerciseId = exercise.session_exercise_id || exercise.template_exercise_id;
-            const historyKey = normalizeExerciseName(exercise.exercise_name);
+            const historyKey = getHistoryKey(exercise);
 
             return (
               <ExerciseAccordion
                 key={exerciseId}
                 exercise={exercise}
-                recentHistory={exerciseHistoryByName[historyKey] || []}
-                isLoadingHistory={loadingExerciseHistoryByName[historyKey] === true}
+                recentHistory={exerciseHistoryByKey[historyKey] || []}
+                isLoadingHistory={loadingExerciseHistoryByKey[historyKey] === true}
+                historyError={exerciseHistoryErrorByKey[historyKey] || ''}
                 isOpen={openExerciseId === exerciseId}
                 isSessionEditable={isSessionEditable}
                 isWorkoutComplete={isWorkoutComplete}
+                exerciseCatalog={exerciseCatalog}
+                isLoadingExerciseCatalog={isLoadingExerciseCatalog}
                 onToggle={() => handleOpenExercise(exerciseId)}
                 onSaveSet={onSaveSet}
                 onRemoveExercise={onRemoveExercise}
                 onUpdateExerciseStatus={onUpdateExerciseStatus}
                 onAddExerciseToTemplate={onAddExerciseToTemplate}
-                onLoadHistory={() => onLoadExerciseHistory(exercise.exercise_name)}
+                onLoadHistory={() => onLoadExerciseHistory(exercise)}
+                onLoadAlternates={() => onLoadAlternates(exercise.template_exercise_id)}
+                onSearchExerciseCatalog={onSearchExerciseCatalog}
+                onCreateAlternate={onCreateAlternate}
+                onSwapExercise={onSwapExercise}
               />
             );
           })}
         </div>
       )}
 
-      <div className="sticky bottom-3 z-10 space-y-3">
-        {showAddExerciseForm && isSessionEditable ? (
-          <form
-            className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel"
-            onSubmit={handleSubmit}
-          >
-            <div className="space-y-3">
-              {suggestionButtons.length > 0 ? (
-                <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-                    Quick add
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {suggestionButtons.map((exercise) => (
-                      <button
-                        key={`${exercise.source}:${exercise.exercise_name}`}
-                        type="button"
-                        className="min-h-11 rounded-full border border-atlas-line bg-atlas-night px-4 py-2 text-sm text-atlas-ink"
-                        onClick={() => handleQuickAdd(exercise)}
-                      >
-                        {exercise.exercise_name.replaceAll('_', ' ')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <label className="block">
-                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-                  Exercise
-                </span>
-                <input
-                  className="min-h-11 w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-base text-atlas-ink"
-                  type="text"
-                  placeholder="Cable fly"
-                  value={formValues.exerciseName}
-                  disabled={!isSessionEditable}
-                  onChange={(event) =>
-                    setFormValues((currentValues) => ({
-                      ...currentValues,
-                      exerciseName: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-                  Muscle group
-                </span>
-                <select
-                  className="min-h-11 w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-base text-atlas-ink"
-                  value={formValues.muscleGroup}
-                  disabled={!isSessionEditable}
-                  onChange={(event) =>
-                    setFormValues((currentValues) => ({
-                      ...currentValues,
-                      muscleGroup: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Select</option>
-                  {availableMuscleGroups.map((muscleGroup) => (
-                    <option key={muscleGroup} value={muscleGroup}>
-                      {muscleGroup}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  className="min-h-11 rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink"
-                  onClick={() => setShowAddExerciseForm(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-11 rounded-2xl bg-atlas-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-                  disabled={!isSessionEditable || isAddingExercise || formValues.exerciseName.trim() === ''}
-                >
-                  {isAddingExercise ? 'Adding...' : 'Add exercise'}
-                </button>
-              </div>
-            </div>
-          </form>
-        ) : null}
-
+      {isSessionEditable ? (
         <div className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-3 py-3 shadow-panel">
           <button
             type="button"
-            className="min-h-11 w-full rounded-2xl bg-atlas-accent px-4 py-3 text-base font-medium text-white disabled:opacity-60"
+            className="w-full rounded-2xl bg-atlas-accent px-4 py-3 text-base font-medium text-white disabled:opacity-60"
             disabled={!isSessionEditable}
-            onClick={() => setShowAddExerciseForm((current) => !current)}
+            onClick={() => setShowAddExerciseSheet(true)}
           >
-            {showAddExerciseForm ? 'Close add exercise' : 'Add exercise'}
+            Add exercise
           </button>
         </div>
-      </div>
+      ) : null}
+
+      <BottomSheet
+        open={showSessionActions}
+        title="Session actions"
+        onClose={() => setShowSessionActions(false)}
+      >
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-4 text-sm text-atlas-slate">
+            {session
+              ? formatSessionTimingSummary(session)
+              : `Previewing ${template.name}`}
+          </div>
+
+          {isSessionEditable ? (
+            <button
+              type="button"
+              className="w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-left text-sm font-medium text-atlas-ink"
+              onClick={() => {
+                setShowSessionActions(false);
+                setShowAddExerciseSheet(true);
+              }}
+            >
+              Add exercise
+            </button>
+          ) : null}
+
+          {session && isSessionEditable ? (
+            <button
+              type="button"
+              className="w-full rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-left text-sm font-medium text-red-200"
+              onClick={() => {
+                setShowSessionActions(false);
+                setShowEndSessionReview(true);
+              }}
+            >
+              Finish session
+            </button>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={showAddExerciseSheet}
+        title="Add exercise"
+        onClose={() => setShowAddExerciseSheet(false)}
+      >
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          {suggestionButtons.length > 0 ? (
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                Quick add
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {suggestionButtons.map((exercise) => (
+                  <button
+                    key={`${exercise.source}:${exercise.exercise_name}`}
+                    type="button"
+                    className="rounded-full border border-atlas-line bg-atlas-night px-4 py-2 text-sm text-atlas-ink"
+                    onClick={() => handleQuickAdd(exercise)}
+                  >
+                    {formatExerciseName(exercise.exercise_name)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              Exercise
+            </span>
+            <input
+              className="w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-base text-atlas-ink"
+              type="text"
+              placeholder="Cable fly"
+              value={formValues.exerciseName}
+              disabled={!isSessionEditable}
+              onChange={(event) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  exerciseName: event.target.value,
+                }))
+              }
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              Muscle group
+            </span>
+            <select
+              className="w-full rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-base text-atlas-ink"
+              value={formValues.muscleGroup}
+              disabled={!isSessionEditable}
+              onChange={(event) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  muscleGroup: event.target.value,
+                }))
+              }
+            >
+              <option value="">Select</option>
+              {availableMuscleGroups.map((muscleGroup) => (
+                <option key={muscleGroup} value={muscleGroup}>
+                  {muscleGroup}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink"
+              onClick={() => setShowAddExerciseSheet(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-2xl bg-atlas-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+              disabled={!isSessionEditable || isAddingExercise || formValues.exerciseName.trim() === ''}
+            >
+              {isAddingExercise ? 'Adding...' : 'Add exercise'}
+            </button>
+          </div>
+        </form>
+      </BottomSheet>
+
+      <BottomSheet
+        open={showEndSessionReview}
+        title="Finish session"
+        onClose={() => setShowEndSessionReview(false)}
+      >
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-4 text-sm text-atlas-slate">
+            Completed and skipped work will be saved as-is. Pending exercises stay unfinished if you end now.
+          </div>
+
+          {unresolvedExercises.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                Pending exercises
+              </div>
+              {unresolvedExercises.map((exercise) => {
+                const exerciseId = exercise.session_exercise_id || exercise.template_exercise_id;
+
+                return (
+                  <button
+                    key={exerciseId}
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-left"
+                    onClick={() => {
+                      setShowEndSessionReview(false);
+                      handleOpenExercise(exerciseId);
+                    }}
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-atlas-ink">
+                        {formatExerciseName(exercise.exercise_name)}
+                      </div>
+                      <div className="mt-1 text-xs text-atlas-slate">
+                        {exercise.target_sets} sets
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-200">
+                      Open
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+              Everything in this session is resolved. You can end the workout now.
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-3 text-sm font-medium text-atlas-ink"
+              onClick={() => setShowEndSessionReview(false)}
+            >
+              Keep logging
+            </button>
+            <button
+              type="button"
+              className="rounded-2xl bg-red-500 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+              disabled={isEndingSession}
+              onClick={() => {
+                void handleConfirmEndSession();
+              }}
+            >
+              {isEndingSession ? 'Ending...' : 'Confirm end'}
+            </button>
+          </div>
+        </div>
+      </BottomSheet>
     </section>
   );
 }
@@ -392,6 +434,71 @@ function SummaryChip({ label, value, tone }) {
   );
 }
 
-function normalizeExerciseName(value) {
-  return String(value || '').trim().toLowerCase();
+function useSessionTimerLabel(startedAt, endedAt) {
+  const [label, setLabel] = useState('Timer');
+
+  useEffect(() => {
+    if (!startedAt) {
+      setLabel('Preview');
+      return undefined;
+    }
+
+    function updateLabel() {
+      setLabel(formatDuration(startedAt, endedAt));
+    }
+
+    updateLabel();
+    if (endedAt) {
+      return undefined;
+    }
+
+    const timerId = window.setInterval(updateLabel, 1000);
+    return () => window.clearInterval(timerId);
+  }, [endedAt, startedAt]);
+
+  return label;
+}
+
+function getHistoryKey(exercise) {
+  return `${exercise.effective_exercise_id || 'none'}:${exercise.session_exercise_id || exercise.template_exercise_id || 'preview'}`;
+}
+
+function formatWorkoutDay(today) {
+  if (!today) {
+    return 'Workout';
+  }
+
+  return new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(`${today}T00:00:00`));
+}
+
+function formatDuration(startedAt, endedAt) {
+  const startMs = new Date(startedAt).getTime();
+  const endMs = endedAt ? new Date(endedAt).getTime() : Date.now();
+  const elapsedMs = Math.max(0, endMs - startMs);
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatSessionTimingSummary(session) {
+  if (!session?.started_at) {
+    return 'Session timing unavailable';
+  }
+
+  const startedAtLabel = new Date(session.started_at).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const durationLabel = formatDuration(session.started_at, session.ended_at);
+
+  if (session.ended_at) {
+    return `Started ${startedAtLabel} • Duration ${durationLabel}`;
+  }
+
+  return `Started ${startedAtLabel} • Running ${durationLabel}`;
 }

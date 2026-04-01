@@ -3,15 +3,19 @@ import {
   addExerciseToTemplate,
   addGymExercise,
   createGymSet,
+  createGymTemplateExerciseAlternate,
   deleteGymExercise,
   endGymSession,
   getActiveGymSession,
   getGymExerciseHistory,
+  getGymExercises,
   getGymSessionInit,
+  getGymTemplateExerciseAlternates,
   getGymTemplates,
   getRecentGymExercises,
   startGymSession,
   updateGymExerciseStatus,
+  updateGymSessionExerciseOverride,
 } from '../api/gymApi';
 
 const DEFAULT_MUSCLE_GROUPS = ['Chest', 'Back', 'Legs', 'Shoulders', 'Biceps', 'Triceps', 'Core'];
@@ -21,6 +25,7 @@ export function useWorkoutSession() {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [template, setTemplate] = useState(null);
   const [session, setSession] = useState(null);
+  const [today, setToday] = useState('');
   const [exercises, setExercises] = useState([]);
   const [openExerciseId, setOpenExerciseId] = useState(null);
   const [pageError, setPageError] = useState('');
@@ -30,10 +35,13 @@ export function useWorkoutSession() {
   const [isAddingExercise, setIsAddingExercise] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
   const [recentExercises, setRecentExercises] = useState([]);
-  const [exerciseHistoryByName, setExerciseHistoryByName] = useState({});
-  const [loadingExerciseHistoryByName, setLoadingExerciseHistoryByName] = useState({});
+  const [exerciseHistoryByKey, setExerciseHistoryByKey] = useState({});
+  const [loadingExerciseHistoryByKey, setLoadingExerciseHistoryByKey] = useState({});
+  const [attemptedExerciseHistoryByKey, setAttemptedExerciseHistoryByKey] = useState({});
+  const [exerciseHistoryErrorByKey, setExerciseHistoryErrorByKey] = useState({});
+  const [exerciseCatalog, setExerciseCatalog] = useState([]);
+  const [isLoadingExerciseCatalog, setIsLoadingExerciseCatalog] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
   const isSessionEditable = session?.status === 'active';
   const activeTemplateDefinition = templates.find(
     (item) => String(item.id) === String(template?.id || selectedTemplateId || ''),
@@ -61,10 +69,11 @@ export function useWorkoutSession() {
       setPageError('');
 
       try {
-        const [templateList, activeSessionState, recentExerciseList] = await Promise.all([
+        const [templateList, activeSessionState, recentExerciseList, catalog] = await Promise.all([
           getGymTemplates(),
           getActiveGymSession(),
           getRecentGymExercises().catch(() => []),
+          getGymExercises('', 100).catch(() => []),
         ]);
 
         if (!isMounted) {
@@ -73,6 +82,7 @@ export function useWorkoutSession() {
 
         setTemplates(templateList);
         setRecentExercises(recentExerciseList);
+        setExerciseCatalog(catalog);
 
         if (activeSessionState) {
           hydrateSessionState(activeSessionState);
@@ -107,7 +117,7 @@ export function useWorkoutSession() {
     }
 
     void refreshSessionInit(selectedTemplateId);
-  }, [selectedTemplateId]);
+  }, [selectedTemplateId, session?.status]);
 
   async function refreshSessionInit(templateId = selectedTemplateId) {
     if (!templateId) {
@@ -118,7 +128,7 @@ export function useWorkoutSession() {
     setPageError('');
 
     try {
-      const initData = await getGymSessionInit(templateId, today);
+      const initData = await getGymSessionInit(templateId);
       hydrateSessionState(initData);
     } catch (error) {
       setPageError(error.message || 'Failed to load workout session');
@@ -138,7 +148,6 @@ export function useWorkoutSession() {
     try {
       await startGymSession({
         templateId: Number(selectedTemplateId),
-        date: today,
       });
 
       const activeSessionState = await getActiveGymSession();
@@ -154,7 +163,7 @@ export function useWorkoutSession() {
 
   async function handleEndSession() {
     if (!session || session.status !== 'active' || isEndingSession) {
-      return;
+      return false;
     }
 
     setIsEndingSession(true);
@@ -174,7 +183,7 @@ export function useWorkoutSession() {
 
   async function handleAddExercise({ exerciseName, muscleGroup }) {
     if (!session || !isSessionEditable || isAddingExercise) {
-      return;
+      return false;
     }
 
     setIsAddingExercise(true);
@@ -197,25 +206,9 @@ export function useWorkoutSession() {
           return currentExercises;
         }
 
-        const nextExercises = [
-          ...currentExercises,
-          {
-            template_exercise_id: null,
-            session_exercise_id: createdExercise.session_exercise_id,
-            exercise_name: createdExercise.exercise_name,
-            muscle_group: createdExercise.muscle_group,
-            order_index: createdExercise.order_index,
-            target_sets: 3,
-            rep_min: 8,
-            rep_max: 12,
-            notes: '',
-            status: createdExercise.status || 'pending',
-            source: 'session',
-            can_add_to_template: true,
-            sets: [],
-            prefill_sets: buildEmptyPrefillSets(3),
-          },
-        ];
+        const nextExercises = [...currentExercises, createdExercise].sort(
+          (left, right) => left.order_index - right.order_index,
+        );
 
         setOpenExerciseId(createdExercise.session_exercise_id);
         return nextExercises;
@@ -223,6 +216,7 @@ export function useWorkoutSession() {
       setRecentExercises((currentExercises) =>
         mergeRecentExercises([
           {
+            exercise_id: createdExercise.effective_exercise_id,
             exercise_name: createdExercise.exercise_name,
             muscle_group: createdExercise.muscle_group,
           },
@@ -293,8 +287,8 @@ export function useWorkoutSession() {
 
     let shouldMarkCompleted = false;
 
-    setExercises((currentExercises) => {
-      const nextExercises = currentExercises.map((exercise) => {
+    setExercises((currentExercises) =>
+      currentExercises.map((exercise) => {
         if (exercise.session_exercise_id !== sessionExerciseId) {
           return exercise;
         }
@@ -310,16 +304,14 @@ export function useWorkoutSession() {
           ...exercise,
           sets: nextSets,
         };
-      });
-
-      return nextExercises;
-    });
+      }),
+    );
 
     if (shouldMarkCompleted) {
       try {
         await handleUpdateExerciseStatus(sessionExerciseId, 'completed');
-      } catch (error) {
-        setPageError(error.message || 'Failed to update exercise status');
+      } catch (_) {
+        // shared page error already covers failures
       }
     }
 
@@ -348,45 +340,189 @@ export function useWorkoutSession() {
             : currentExercise,
         ),
       );
+      setTemplates(await getGymTemplates());
     } catch (error) {
       setPageError(error.message || 'Failed to add exercise to template');
     }
   }
 
-  async function handleLoadExerciseHistory(exerciseName) {
-    const normalizedName = normalizeExerciseName(exerciseName);
+  async function handleLoadExerciseHistory(exercise) {
+    const historyKey = getHistoryKey(exercise);
 
-    if (!normalizedName || exerciseHistoryByName[normalizedName] || loadingExerciseHistoryByName[normalizedName]) {
+    if (
+      !historyKey
+      || loadingExerciseHistoryByKey[historyKey]
+      || attemptedExerciseHistoryByKey[historyKey]
+    ) {
       return;
     }
 
-    setLoadingExerciseHistoryByName((currentState) => ({
+    if (!exercise.effective_exercise_id) {
+      return;
+    }
+
+    setAttemptedExerciseHistoryByKey((currentState) => ({
       ...currentState,
-      [normalizedName]: true,
+      [historyKey]: true,
+    }));
+    setLoadingExerciseHistoryByKey((currentState) => ({
+      ...currentState,
+      [historyKey]: true,
     }));
 
     try {
-      const history = await getGymExerciseHistory(exerciseName);
-      setExerciseHistoryByName((currentState) => ({
+      const history = await getGymExerciseHistory(exercise.effective_exercise_id, {
+        limit: 3,
+        templateId: getExerciseTemplateScopeId(exercise, template?.id),
+      });
+
+      setExerciseHistoryByKey((currentState) => ({
         ...currentState,
-        [normalizedName]: groupExerciseHistory(history).slice(0, 3),
+        [historyKey]: groupExerciseHistory(history).slice(0, 3),
+      }));
+      setExerciseHistoryErrorByKey((currentState) => ({
+        ...currentState,
+        [historyKey]: '',
       }));
     } catch (error) {
-      setPageError(error.message || 'Failed to load exercise history');
-    } finally {
-      setLoadingExerciseHistoryByName((currentState) => ({
+      setExerciseHistoryByKey((currentState) => ({
         ...currentState,
-        [normalizedName]: false,
+        [historyKey]: [],
       }));
+      setExerciseHistoryErrorByKey((currentState) => ({
+        ...currentState,
+        [historyKey]: error.message || 'History unavailable',
+      }));
+    } finally {
+      setLoadingExerciseHistoryByKey((currentState) => ({
+        ...currentState,
+        [historyKey]: false,
+      }));
+    }
+  }
+
+  async function refreshAlternates(templateExerciseId) {
+    if (!templateExerciseId) {
+      return [];
+    }
+
+    const alternates = await getGymTemplateExerciseAlternates(templateExerciseId);
+
+    setExercises((currentExercises) =>
+      currentExercises.map((exercise) =>
+        exercise.template_exercise_id === templateExerciseId
+          ? {
+              ...exercise,
+              alternates,
+            }
+          : exercise,
+      ),
+    );
+    setTemplates((currentTemplates) =>
+      currentTemplates.map((currentTemplate) => ({
+        ...currentTemplate,
+        exercises: currentTemplate.exercises.map((exercise) =>
+          exercise.template_exercise_id === templateExerciseId
+            ? {
+                ...exercise,
+                alternates,
+              }
+            : exercise,
+        ),
+      })),
+    );
+
+    return alternates;
+  }
+
+  async function handleSearchExerciseCatalog(search = '') {
+    setIsLoadingExerciseCatalog(true);
+
+    try {
+      const nextCatalog = await getGymExercises(search, 100);
+      setExerciseCatalog(nextCatalog);
+      return nextCatalog;
+    } catch (error) {
+      setPageError(error.message || 'Failed to load exercises');
+      return [];
+    } finally {
+      setIsLoadingExerciseCatalog(false);
+    }
+  }
+
+  async function handleCreateAlternate(templateExerciseId, payload) {
+    try {
+      const alternates = await createGymTemplateExerciseAlternate(templateExerciseId, payload);
+      setExercises((currentExercises) =>
+        currentExercises.map((exercise) =>
+          exercise.template_exercise_id === templateExerciseId
+            ? {
+                ...exercise,
+                alternates,
+              }
+            : exercise,
+        ),
+      );
+      setTemplates((currentTemplates) =>
+        currentTemplates.map((currentTemplate) => ({
+          ...currentTemplate,
+          exercises: currentTemplate.exercises.map((exercise) =>
+            exercise.template_exercise_id === templateExerciseId
+              ? {
+                  ...exercise,
+                  alternates,
+                }
+              : exercise,
+          ),
+        })),
+      );
+      setExerciseCatalog((currentCatalog) => mergeExerciseCatalog(currentCatalog, alternates));
+      return alternates;
+    } catch (error) {
+      setPageError(error.message || 'Failed to add alternate');
+      throw error;
+    }
+  }
+
+  async function handleSwapExercise(sessionExerciseId, overrideAlternateId, confirmKeepLoggedSets = false) {
+    try {
+      const updatedExercise = await updateGymSessionExerciseOverride(sessionExerciseId, {
+        override_alternate_id: overrideAlternateId,
+        confirm_keep_logged_sets: confirmKeepLoggedSets,
+      });
+
+      setExercises((currentExercises) =>
+        currentExercises.map((exercise) =>
+          exercise.session_exercise_id === sessionExerciseId
+            ? {
+                ...exercise,
+                ...updatedExercise,
+              }
+            : exercise,
+        ),
+      );
+      return { type: 'updated', exercise: updatedExercise };
+    } catch (error) {
+      if (error.data?.type === 'confirmation_required') {
+        return error.data;
+      }
+
+      setPageError(error.message || 'Failed to swap exercise');
+      throw error;
     }
   }
 
   function hydrateSessionState(state) {
     setTemplate(state.template);
     setSession(state.current_session);
-    setExercises(state.exercises);
+    setToday(state.today || '');
+    setExercises(state.exercises || []);
+    setExerciseHistoryByKey({});
+    setLoadingExerciseHistoryByKey({});
+    setAttemptedExerciseHistoryByKey({});
+    setExerciseHistoryErrorByKey({});
     setSelectedTemplateId(state.template ? String(state.template.id) : '');
-    setOpenExerciseId(findNextOpenExerciseId(state.exercises));
+    setOpenExerciseId(findNextOpenExerciseId(state.exercises || []));
   }
 
   return {
@@ -394,6 +530,7 @@ export function useWorkoutSession() {
     selectedTemplateId,
     template,
     session,
+    today,
     exercises,
     openExerciseId,
     pageError,
@@ -407,9 +544,11 @@ export function useWorkoutSession() {
     recentExercises,
     suggestedExercises,
     sessionSummary,
-    exerciseHistoryByName,
-    loadingExerciseHistoryByName,
-    today,
+    exerciseHistoryByKey,
+    loadingExerciseHistoryByKey,
+    exerciseHistoryErrorByKey,
+    exerciseCatalog,
+    isLoadingExerciseCatalog,
     isWorkoutComplete: exercises.length > 0 && exercises.every(isExerciseResolved),
     setSelectedTemplateId,
     setOpenExerciseId,
@@ -421,6 +560,10 @@ export function useWorkoutSession() {
     saveSet: handleSaveSet,
     addSessionExerciseToTemplate: handleAddExerciseToTemplate,
     loadExerciseHistory: handleLoadExerciseHistory,
+    loadAlternates: refreshAlternates,
+    searchExerciseCatalog: handleSearchExerciseCatalog,
+    createAlternate: handleCreateAlternate,
+    swapExercise: handleSwapExercise,
   };
 }
 
@@ -472,7 +615,7 @@ function buildSessionSummary(exercises) {
 }
 
 function buildSuggestedExercises({ currentExercises, recentExercises, templateExercises }) {
-  const currentNames = new Set(currentExercises.map((exercise) => normalizeExerciseName(exercise.exercise_name)));
+  const currentNames = new Set(currentExercises.map(getExerciseIdentity).filter(Boolean));
   const suggestions = [];
   const seenNames = new Set(currentNames);
 
@@ -481,13 +624,14 @@ function buildSuggestedExercises({ currentExercises, recentExercises, templateEx
       continue;
     }
 
-    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+    const normalizedName = getExerciseIdentity(exercise);
     if (!normalizedName || seenNames.has(normalizedName)) {
       continue;
     }
 
     seenNames.add(normalizedName);
     suggestions.push({
+      exercise_id: exercise.exercise_id,
       exercise_name: exercise.exercise_name,
       muscle_group: exercise.muscle_group || '',
       source: 'template',
@@ -495,13 +639,14 @@ function buildSuggestedExercises({ currentExercises, recentExercises, templateEx
   }
 
   for (const exercise of recentExercises) {
-    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+    const normalizedName = getExerciseIdentity(exercise);
     if (!normalizedName || seenNames.has(normalizedName)) {
       continue;
     }
 
     seenNames.add(normalizedName);
     suggestions.push({
+      exercise_id: exercise.exercise_id,
       exercise_name: exercise.exercise_name,
       muscle_group: exercise.muscle_group || '',
       source: 'recent',
@@ -516,7 +661,7 @@ function mergeRecentExercises(exercises) {
   const recentExercises = [];
 
   for (const exercise of exercises) {
-    const normalizedName = normalizeExerciseName(exercise.exercise_name);
+    const normalizedName = getExerciseIdentity(exercise);
 
     if (!normalizedName || seenNames.has(normalizedName)) {
       continue;
@@ -527,6 +672,28 @@ function mergeRecentExercises(exercises) {
   }
 
   return recentExercises.slice(0, 12);
+}
+
+function mergeExerciseCatalog(currentCatalog, alternates) {
+  const merged = [...currentCatalog];
+  const seen = new Set(currentCatalog.map((exercise) => Number(exercise.id)));
+
+  for (const alternate of alternates) {
+    const exerciseId = Number(alternate.exercise_id || alternate.id);
+
+    if (seen.has(exerciseId)) {
+      continue;
+    }
+
+    seen.add(exerciseId);
+    merged.push({
+      id: exerciseId,
+      name: alternate.exercise_name,
+      muscle_group: alternate.muscle_group || '',
+    });
+  }
+
+  return merged.sort((left, right) => String(left.name).localeCompare(String(right.name)));
 }
 
 function groupExerciseHistory(historyRows) {
@@ -556,11 +723,28 @@ function normalizeExerciseName(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function buildEmptyPrefillSets(targetSets) {
-  return Array.from({ length: targetSets }, (_, index) => ({
-    set_number: index + 1,
-    weight: null,
-    reps: null,
-    rir: null,
-  }));
+function getExerciseIdentity(exercise) {
+  const exerciseId = Number(exercise?.exercise_id || exercise?.effective_exercise_id || 0);
+
+  if (exerciseId > 0) {
+    return `id:${exerciseId}`;
+  }
+
+  return normalizeExerciseName(exercise?.exercise_name);
+}
+
+function getHistoryKey(exercise) {
+  if (!exercise?.effective_exercise_id) {
+    return '';
+  }
+
+  return `${exercise.effective_exercise_id}:${exercise.session_exercise_id || exercise.template_exercise_id || 'preview'}`;
+}
+
+function getExerciseTemplateScopeId(exercise, templateId) {
+  if (!exercise?.template_exercise_id || !templateId) {
+    return undefined;
+  }
+
+  return Number(templateId);
 }
