@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { BottomSheet } from '../BottomSheet';
 import { formatExerciseName, formatLocalDate } from '../../utils/formatters';
 
 function formatMetric(value) {
@@ -20,9 +21,16 @@ export function SessionDetail({
   onLoadExerciseInsight,
 }) {
   const [expandedExerciseIds, setExpandedExerciseIds] = useState({});
+  const [mobileSelectedExerciseId, setMobileSelectedExerciseId] = useState(null);
+  const shouldRenderMobileDetail = isOpen || isLoadingSessionDetail || Boolean(sessionDetail);
+  const mobileSelectedExercise = sessionDetail?.exercises.find(
+    (exercise) => exercise.session_exercise_id === mobileSelectedExerciseId,
+  ) || null;
+  const mobileInsightKey = getExerciseInsightKey(mobileSelectedExercise, sessionDetail?.template_id);
 
   useEffect(() => {
     setExpandedExerciseIds({});
+    setMobileSelectedExerciseId(null);
   }, [sessionDetail?.id]);
 
   useEffect(() => {
@@ -43,7 +51,11 @@ export function SessionDetail({
         void onLoadExerciseInsight(exercise);
       }
     });
-  }, [expandedExerciseIds, onLoadExerciseInsight, sessionDetail]);
+
+    if (mobileSelectedExercise?.effective_exercise_id) {
+      void onLoadExerciseInsight(mobileSelectedExercise);
+    }
+  }, [expandedExerciseIds, mobileSelectedExercise, onLoadExerciseInsight, sessionDetail]);
 
   const detailContent = (
     <section className="flex h-full flex-col rounded-[22px] border border-atlas-line/80 bg-atlas-panel shadow-panel">
@@ -114,12 +126,17 @@ export function SessionDetail({
                         <button
                           type="button"
                           className="min-w-0 flex-1 text-left"
-                          onClick={() =>
-                            setExpandedExerciseIds((current) => ({
-                              ...current,
-                              [exercise.session_exercise_id]: !isExpanded,
-                            }))
-                          }
+                          onClick={() => {
+                            if (window.matchMedia('(min-width: 768px)').matches) {
+                              setExpandedExerciseIds((current) => ({
+                                ...current,
+                                [exercise.session_exercise_id]: !isExpanded,
+                              }));
+                              return;
+                            }
+
+                            setMobileSelectedExerciseId(exercise.session_exercise_id);
+                          }}
                         >
                           <div className={`${isExpanded ? 'whitespace-normal' : 'truncate'} text-lg font-semibold text-atlas-ink`}>
                             {formatExerciseName(exercise.exercise_name)}
@@ -148,39 +165,13 @@ export function SessionDetail({
                       </div>
 
                       {isExpanded ? (
-                        <div className="mt-4 space-y-3">
-                          <ExerciseInsightPanel
+                        <div className="mt-4 hidden space-y-3 md:block">
+                          <ExerciseDetailContent
                             exercise={exercise}
                             insight={exerciseInsightById[insightKey] || null}
                             isLoading={loadingExerciseInsightById[insightKey] === true}
                             error={exerciseInsightErrorById[insightKey] || ''}
                           />
-
-                          {exercise.sets.length === 0 ? (
-                            <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
-                              No sets logged.
-                            </div>
-                          ) : (
-                            exercise.sets.map((set) => (
-                              <div
-                                key={set.id}
-                                className="rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-3 text-sm"
-                              >
-                                {set.logged_exercise_name
-                                  && Number(set.logged_exercise_id || 0) !== Number(exercise.effective_exercise_id || 0) ? (
-                                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-                                    Logged as {formatExerciseName(set.logged_exercise_name)}
-                                  </div>
-                                ) : null}
-                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                  <Metric label="Set" value={set.set_number} />
-                                  <Metric label="Weight" value={formatMetric(set.weight)} />
-                                  <Metric label="Reps" value={formatMetric(set.reps)} />
-                                  <Metric label="RIR" value={formatMetric(set.rir)} />
-                                </div>
-                              </div>
-                            ))
-                          )}
                         </div>
                       ) : null}
                     </article>
@@ -200,21 +191,28 @@ export function SessionDetail({
         {detailContent}
       </div>
 
-      {isOpen ? (
-        <div className="fixed inset-0 z-40 bg-black/45 md:hidden">
-          <button
-            type="button"
-            aria-label="Close history detail"
-            className="absolute inset-0"
-            onClick={onClose}
-          />
-          <div className="absolute inset-y-0 right-0 w-full max-w-xl p-3">
-            <div className="h-full overflow-hidden rounded-[24px]">
-              {detailContent}
-            </div>
+      {shouldRenderMobileDetail ? (
+        <div className="md:hidden">
+          <div className="overflow-hidden rounded-[24px]">
+            {detailContent}
           </div>
         </div>
       ) : null}
+
+      <BottomSheet
+        open={Boolean(mobileSelectedExercise)}
+        title={mobileSelectedExercise ? formatExerciseName(mobileSelectedExercise.exercise_name) : 'Exercise detail'}
+        onClose={() => setMobileSelectedExerciseId(null)}
+      >
+        {mobileSelectedExercise ? (
+          <ExerciseDetailContent
+            exercise={mobileSelectedExercise}
+            insight={exerciseInsightById[mobileInsightKey] || null}
+            isLoading={loadingExerciseInsightById[mobileInsightKey] === true}
+            error={exerciseInsightErrorById[mobileInsightKey] || ''}
+          />
+        ) : null}
+      </BottomSheet>
     </>
   );
 }
@@ -308,6 +306,45 @@ function ExerciseInsightPanel({ exercise, insight, isLoading, error }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ExerciseDetailContent({ exercise, insight, isLoading, error }) {
+  return (
+    <div className="space-y-3">
+      <ExerciseInsightPanel
+        exercise={exercise}
+        insight={insight}
+        isLoading={isLoading}
+        error={error}
+      />
+
+      {exercise.sets.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-panel px-4 py-4 text-sm text-atlas-slate">
+          No sets logged.
+        </div>
+      ) : (
+        exercise.sets.map((set) => (
+          <div
+            key={set.id}
+            className="rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-3 text-sm"
+          >
+            {set.logged_exercise_name
+              && Number(set.logged_exercise_id || 0) !== Number(exercise.effective_exercise_id || 0) ? (
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                Logged as {formatExerciseName(set.logged_exercise_name)}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Metric label="Set" value={set.set_number} />
+              <Metric label="Weight" value={formatMetric(set.weight)} />
+              <Metric label="Reps" value={formatMetric(set.reps)} />
+              <Metric label="RIR" value={formatMetric(set.rir)} />
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

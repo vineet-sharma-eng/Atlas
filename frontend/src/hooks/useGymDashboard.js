@@ -103,7 +103,7 @@ export function useGymDashboard() {
           pickStableSelection(current, templateList, (template) => String(template.id)),
         );
         setSelectedSessionId((current) =>
-          pickStableSelection(current, sessionList, (session) => String(session.id)),
+          pickExistingSelection(current, sessionList, (session) => String(session.id)),
         );
       });
     } catch (error) {
@@ -522,6 +522,14 @@ function pickStableSelection(currentValue, items, getKey) {
   }
 
   return items[0] ? getKey(items[0]) : '';
+}
+
+function pickExistingSelection(currentValue, items, getKey) {
+  if (currentValue && items.some((item) => getKey(item) === String(currentValue))) {
+    return currentValue;
+  }
+
+  return '';
 }
 
 function compareTemplates(left, right) {

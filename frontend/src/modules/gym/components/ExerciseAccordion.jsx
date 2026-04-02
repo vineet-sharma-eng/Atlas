@@ -125,7 +125,7 @@ export function ExerciseAccordion({
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [exercise.session_exercise_id, isCompleted, isOpen, isSessionEditable, isSkipped, rows]);
+  }, [exercise.session_exercise_id, isCompleted, isOpen, isSessionEditable, isSkipped]);
 
   function registerInput(rowIndex, field, node) {
     const key = `${rowIndex}:${field}`;

@@ -8,8 +8,8 @@ const APP_VIEWS = {
 };
 
 const NAV_ITEMS = [
-  { id: 'workout', label: 'Workout', shortLabel: 'W', title: 'Workout logging' },
-  { id: 'dashboard', label: 'Dashboard', shortLabel: 'D', title: 'Templates and history' },
+  { id: 'workout', label: 'Workout', title: 'Workout logging' },
+  { id: 'dashboard', label: 'History', title: 'Templates and history' },
 ];
 
 export default function App() {
@@ -32,16 +32,18 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen pb-[calc(48px+env(safe-area-inset-bottom)+16px)] md:pb-0">
+    <div className="min-h-screen pb-[calc(78px+env(safe-area-inset-bottom)+20px)] md:pb-0">
       <div className="sticky top-0 z-20 hidden border-b border-atlas-line/80 bg-atlas-night/95 backdrop-blur md:block">
-        <div className="mx-auto flex h-11 max-w-7xl items-center justify-between gap-3 px-4">
-          <div className="text-sm font-semibold text-atlas-ink">Atlas gym</div>
-          <div className="grid grid-cols-2 gap-2 rounded-2xl bg-atlas-panel p-1">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-4 py-3">
+          <div className="text-xl font-semibold uppercase tracking-[0.14em] text-atlas-ink">
+            Atlas Gym
+          </div>
+          <div className="grid w-full max-w-[320px] grid-cols-2 gap-2 rounded-[20px] border border-atlas-line/80 bg-atlas-panel/95 p-1.5">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.id}
                 type="button"
-                className={`rounded-[14px] px-4 py-2 text-sm font-medium ${
+                className={`min-w-0 rounded-[14px] px-4 py-2.5 text-sm font-medium ${
                   activeView === item.id
                     ? 'bg-atlas-accent text-white'
                     : 'text-atlas-slate'
@@ -55,30 +57,39 @@ export default function App() {
         </div>
       </div>
 
+      <div className="border-b border-atlas-line/40 bg-atlas-night/70 md:hidden">
+        <div className="mx-auto max-w-5xl px-4 py-3">
+          <div className="text-sm font-semibold uppercase tracking-[0.2em] text-atlas-ink">
+            Atlas Gym
+          </div>
+        </div>
+      </div>
+
       <ActiveView />
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-atlas-line/80 bg-atlas-night/95 px-3 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        <div className="mx-auto flex h-12 max-w-5xl items-center justify-around gap-2">
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeView === item.id;
+      <nav className="fixed inset-x-0 bottom-0 z-30 px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-2 md:hidden">
+        <div className="mx-auto max-w-5xl rounded-[28px] border border-atlas-line/70 bg-atlas-night/92 px-3 py-3 shadow-panel backdrop-blur">
+          <div className="flex items-center gap-3">
+            {NAV_ITEMS.map((item) => {
+              const isActive = activeView === item.id;
 
-            return (
-              <button
-                key={item.id}
-                type="button"
-                aria-label={item.title}
-                className={`flex h-10 min-w-[72px] items-center justify-center rounded-2xl px-3 text-sm font-semibold ${
-                  isActive
-                    ? 'bg-atlas-accent text-white'
-                    : 'bg-atlas-panel text-atlas-slate'
-                }`}
-                onClick={() => handleChangeView(item.id)}
-              >
-                <span className="sm:hidden">{item.shortLabel}</span>
-                <span className="hidden sm:inline">{item.label}</span>
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-label={item.title}
+                  className={`flex h-11 flex-1 items-center justify-center rounded-[20px] px-4 text-sm font-semibold ${
+                    isActive
+                      ? 'bg-atlas-accent text-white'
+                      : 'bg-atlas-panel text-atlas-slate'
+                  }`}
+                  onClick={() => handleChangeView(item.id)}
+                >
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </nav>
     </div>

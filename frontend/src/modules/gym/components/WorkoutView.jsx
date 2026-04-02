@@ -124,28 +124,36 @@ export function WorkoutView({
 
   return (
     <section className="space-y-3">
-      <div className="sticky top-2 z-10 rounded-[20px] border border-atlas-line/80 bg-atlas-panel/95 px-3 shadow-panel backdrop-blur">
-        <div className="flex h-11 items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
-              {template.day || formatWorkoutDay(today)}
+      <div className="sticky top-2 z-10 md:top-3">
+        <div className="overflow-hidden rounded-[24px] border border-atlas-line/50 bg-atlas-panel/72 px-3 py-2.5 shadow-panel backdrop-blur">
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-atlas-line/60 bg-atlas-night/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
+                  {template.day || formatWorkoutDay(today)}
+                </span>
+                <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-atlas-slate">
+                  {session ? `${progressLabel} resolved` : 'Preview mode'}
+                </span>
+              </div>
+              <div className="mt-2 truncate text-base font-semibold text-atlas-ink md:text-lg">
+                {template.name}
+              </div>
             </div>
-            <div className="truncate text-sm font-semibold text-atlas-ink">
-              {template.name}
+
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="rounded-full border border-atlas-line/60 bg-atlas-night/78 px-3 py-1.5 text-sm font-semibold tabular-nums text-atlas-ink">
+                {session ? elapsedLabel : 'Preview'}
+              </div>
+              <button
+                type="button"
+                aria-label="Session actions"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-atlas-line/60 bg-atlas-mist/70 text-atlas-ink transition-colors hover:border-atlas-accent/40 hover:bg-atlas-accentSoft/40 md:h-10 md:w-10"
+                onClick={() => setShowSessionActions(true)}
+              >
+                <ActionDots />
+              </button>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="rounded-full border border-atlas-line bg-atlas-night px-2.5 py-1 text-xs font-semibold text-atlas-slate">
-              {session ? elapsedLabel : 'Preview'}
-            </div>
-            <button
-              type="button"
-              aria-label="Session actions"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-atlas-line bg-atlas-mist text-atlas-ink"
-              onClick={() => setShowSessionActions(true)}
-            >
-              ...
-            </button>
           </div>
         </div>
       </div>
@@ -431,6 +439,16 @@ function SummaryChip({ label, value, tone }) {
       <div className="text-[11px] font-semibold uppercase tracking-[0.14em]">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
+  );
+}
+
+function ActionDots() {
+  return (
+    <span className="flex items-center gap-1" aria-hidden="true">
+      <span className="h-1 w-1 rounded-full bg-current" />
+      <span className="h-1 w-1 rounded-full bg-current" />
+      <span className="h-1 w-1 rounded-full bg-current" />
+    </span>
   );
 }
 
