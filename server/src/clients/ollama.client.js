@@ -1,38 +1,21 @@
+const { Ollama } = require('ollama');
+
 const config = require('../config');
 const { AppError } = require('../utils/errorHandler');
 
+const ollama = new Ollama({
+  host: config.ollama.baseUrl,
+  fetch: createTimedFetch(config.ollama.timeoutMs),
+});
+
 async function generate({ prompt, system }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.ollama.timeoutMs);
-
   try {
-    const response = await fetch(
-      `${config.ollama.baseUrl.replace(/\/$/, '')}${config.ollama.generatePath}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          model: config.ollama.model,
-          prompt,
-          system,
-          stream: false,
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    if (!response.ok) {
-      const payload = await safeJson(response);
-      throw new AppError('Ollama request failed', 502, {
-        status: response.status,
-        response: payload,
-      });
-    }
-
-    const payload = await safeJson(response);
+    const payload = await ollama.generate({
+      model: config.ollama.model,
+      prompt,
+      system,
+      stream: false,
+    });
     const text = String(payload.response || '').trim();
 
     if (!text) {
@@ -41,7 +24,7 @@ async function generate({ prompt, system }) {
 
     return text;
   } catch (error) {
-    if (error.name === 'AbortError') {
+    if (error.name === 'AbortError' || /timed out/i.test(error.message || '')) {
       throw new AppError('Ollama request timed out', 504);
     }
 
@@ -52,23 +35,35 @@ async function generate({ prompt, system }) {
     throw new AppError('Ollama request failed', 502, {
       cause: error.message,
     });
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
-async function safeJson(response) {
-  const text = await response.text();
+function createTimedFetch(timeoutMs) {
+  return async function timedFetch(input, init = {}) {
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const relayAbort = () => timeoutController.abort();
 
-  if (!text) {
-    return {};
-  }
+    if (init.signal) {
+      if (init.signal.aborted) {
+        timeoutController.abort();
+      } else {
+        init.signal.addEventListener('abort', relayAbort, { once: true });
+      }
+    }
 
-  try {
-    return JSON.parse(text);
-  } catch (_) {
-    return { raw: text };
-  }
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+      if (init.signal) {
+        init.signal.removeEventListener('abort', relayAbort);
+      }
+    }
+  };
 }
 
 module.exports = {
