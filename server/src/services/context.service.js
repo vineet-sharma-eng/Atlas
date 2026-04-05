@@ -1,109 +1,178 @@
-function buildContext({ intent, financeAnalysis, gymAnalysis }) {
-  switch (intent) {
-    case 'finance':
-      return buildFinanceContext(financeAnalysis);
-    case 'gym':
-      return buildGymContext(gymAnalysis);
-    default:
-      return buildGeneralContext({ financeAnalysis, gymAnalysis });
+function buildContext({ intents, queryType, financeAnalysis, gymAnalysis, message }) {
+  if (queryType === 'greeting' || queryType === 'smalltalk' || queryType === 'question') {
+    return '';
   }
+
+  const sections = [];
+
+  if (intents.includes('finance')) {
+    sections.push(buildFinanceContext(financeAnalysis, message));
+  }
+
+  if (intents.includes('gym')) {
+    sections.push(buildGymContext(gymAnalysis, message));
+  }
+
+  return sections.filter(Boolean).join('\n\n');
 }
 
-function buildFinanceContext(analysis) {
+function buildFinanceContext(analysis, message) {
   if (!analysis || !analysis.data) {
-    return [
-      '- Finance data is currently unavailable.',
-    ].join('\n');
+    return 'Finance context unavailable.';
   }
 
-  const breakdown = Array.isArray(analysis.data.categoryBreakdown)
-    ? analysis.data.categoryBreakdown.map((item) => `- ${item.category}: ${formatNumber(item.total)}`)
-    : [];
-  const trends = [];
+  const normalizedMessage = String(message || '').toLowerCase();
+  const sections = ['Finance context:'];
+  const derivedSignals = buildFinanceSignals(analysis);
 
-  if (analysis.meta?.periodDays) {
-    trends.push(`- Analysis window: last ${analysis.meta.periodDays} days`);
+  sections.push(`- Summary: ${analysis.summary || 'No finance summary available.'}`);
+  sections.push(`- Total spend: ${formatNumber(analysis.data.totalSpent)}`);
+  sections.push(`- Spending trend classification: ${derivedSignals.trendClassification}`);
+  sections.push(`- Data completeness: ${derivedSignals.dataCompleteness}`);
+
+  if (wantsCategoryDetails(normalizedMessage)) {
+    sections.push(`- Top category: ${analysis.data.topCategory || 'unknown'}`);
+    sections.push('- Category signals:');
+    const breakdown = Array.isArray(analysis.data.categoryBreakdown)
+      ? analysis.data.categoryBreakdown.slice(0, 3).map((item) => `- ${item.category}: ${formatNumber(item.total)}`)
+      : [];
+    sections.push(...(breakdown.length > 0 ? breakdown : ['- No category breakdown available']));
   }
 
-  if (analysis.meta?.transactionCount !== undefined) {
-    trends.push(`- Transactions analyzed: ${analysis.meta.transactionCount}`);
-  }
-
-  if (analysis.meta?.trend) {
+  if (wantsTrends(normalizedMessage) && analysis.meta?.trend) {
     const changePercent = analysis.meta.trend.changePercent === null
       ? 'N/A'
       : `${Number(analysis.meta.trend.changePercent).toFixed(1)}%`;
-    trends.push(
-      `- Spending trend: ${analysis.meta.trend.direction} ${changePercent} versus previous period (change ${formatNumber(analysis.meta.trend.changeAmount)})`,
+    sections.push(`- Trend: ${analysis.meta.trend.direction} ${changePercent} versus the previous period`);
+  }
+
+  if (wantsAnomalies(normalizedMessage)) {
+    sections.push(
+      analysis.data.largestTransaction
+        ? `- Notable transaction: ${formatNumber(analysis.data.largestTransaction.amount)} for ${analysis.data.largestTransaction.description} on ${analysis.data.largestTransaction.date}`
+        : '- No notable transaction available',
     );
   }
 
-  return [
-    'Finance context:',
-    `- Summary: ${analysis.summary || 'No finance summary available.'}`,
-    `- Total spend: ${formatNumber(analysis.data.totalSpent)}`,
-    `- Top category: ${analysis.data.topCategory || 'unknown'}`,
-    analysis.data.largestTransaction
-      ? `- Largest transaction: ${formatNumber(analysis.data.largestTransaction.amount)} for ${analysis.data.largestTransaction.description} on ${analysis.data.largestTransaction.date}`
-      : '- Largest transaction: unavailable',
-    '- Category breakdown:',
-    ...(breakdown.length > 0 ? breakdown : ['- No category breakdown available']),
-    '- Trends:',
-    ...(trends.length > 0 ? trends : ['- No finance trends available']),
-  ].join('\n');
+  return dedupeLines(sections).join('\n');
 }
 
-function buildGymContext(analysis) {
+function buildGymContext(analysis, message) {
   if (!analysis || !analysis.data) {
-    return [
-      '- Gym data is currently unavailable.',
-    ].join('\n');
+    return 'Gym context unavailable.';
   }
 
-  const topExercises = Array.isArray(analysis.data.topExercises)
-    ? analysis.data.topExercises.map(
-        (item) => `- ${item.exercise}: ${item.sessions} sessions, ${item.sets} sets, best weight ${formatNullable(item.bestWeight)}`,
-      )
-    : [];
-  const progressIndicators = Array.isArray(analysis.data.progressIndicators)
-    ? analysis.data.progressIndicators.map((item) => `- ${item.exercise}: ${item.trend}`)
-    : [];
-  const recentWorkouts = Array.isArray(analysis.data.recentWorkouts)
-    ? analysis.data.recentWorkouts.map(
-        (item) => `- ${item.date}: ${item.workout}, ${item.exercises} exercises, ${item.sets} sets, volume ${formatNumber(item.totalVolume)}`,
-      )
-    : [];
+  const normalizedMessage = String(message || '').toLowerCase();
+  const sections = ['Gym context:'];
+  const derivedSignals = buildGymSignals(analysis);
+  sections.push(`- Summary: ${analysis.summary || 'No gym summary available.'}`);
+  sections.push(`- Consistency level: ${derivedSignals.consistencyLevel}`);
+  sections.push(`- Progression signal: ${derivedSignals.progressionSignal}`);
 
-  return [
-    'Gym context:',
-    `- Summary: ${analysis.summary || 'No gym summary available.'}`,
-    analysis.meta?.periodDays ? `- Analysis window: last ${analysis.meta.periodDays} days` : '- Analysis window: unavailable',
-    analysis.meta?.workoutCount !== undefined ? `- Workout frequency: ${analysis.meta.workoutCount} workouts` : '- Workout frequency: unavailable',
-    '- Exercise progress:',
-    ...(progressIndicators.length > 0 ? progressIndicators : ['- No exercise progress signals available']),
-    '- Potential plateaus:',
-    ...(progressIndicators.length === 0 ? ['- No recent strength increases detected in the available window'] : ['- No clear plateaus detected among improving exercises']),
-    '- Top exercises:',
-    ...(topExercises.length > 0 ? topExercises : ['- No exercise frequency data available']),
-    '- Recent workouts:',
-    ...(recentWorkouts.length > 0 ? recentWorkouts : ['- No recent workout summaries available']),
-  ].join('\n');
-}
+  if (wantsProgress(normalizedMessage)) {
+    const progressIndicators = Array.isArray(analysis.data.progressIndicators)
+      ? analysis.data.progressIndicators.slice(0, 3).map((item) => `- ${item.exercise}: ${item.trend}`)
+      : [];
+    sections.push('- Progress signals:');
+    sections.push(...(progressIndicators.length > 0 ? progressIndicators : ['- No exercise progress signals available']));
+  }
 
-function buildGeneralContext({ financeAnalysis, gymAnalysis }) {
-  return [
-    buildFinanceContext(financeAnalysis),
-    '',
-    buildGymContext(gymAnalysis),
-  ].join('\n');
+  if (wantsPlateaus(normalizedMessage)) {
+    sections.push('- Plateau signals:');
+    sections.push(`- ${derivedSignals.plateauSignal}`);
+  }
+
+  if (wantsFrequency(normalizedMessage)) {
+    sections.push(
+      analysis.meta?.workoutCount !== undefined
+        ? `- Workout frequency: ${analysis.meta.workoutCount} workouts in the last ${analysis.meta.periodDays || 'tracked'} days`
+        : '- Workout frequency unavailable',
+    );
+  }
+
+  return dedupeLines(sections).join('\n');
 }
 
 function formatNumber(value) {
   return Number(value || 0).toFixed(2);
 }
 
-function formatNullable(value) {
-  return value === null || value === undefined ? 'N/A' : formatNumber(value);
+function buildFinanceSignals(analysis) {
+  const trend = analysis.meta?.trend || null;
+  let trendClassification = 'stable or unavailable';
+
+  if (trend?.direction === 'up') {
+    trendClassification = 'spending increasing';
+  } else if (trend?.direction === 'down') {
+    trendClassification = 'spending decreasing';
+  } else if (trend?.direction === 'flat') {
+    trendClassification = 'spending flat';
+  }
+
+  const hasTrendData = Boolean(trend);
+  const hasCategoryData = Array.isArray(analysis.data?.categoryBreakdown) && analysis.data.categoryBreakdown.length > 0;
+  const hasTransactionData = Number(analysis.meta?.transactionCount || 0) > 0;
+  const dataCompleteness = hasTrendData && hasCategoryData && hasTransactionData
+    ? 'moderate, with spending and category coverage but no income or savings data'
+    : 'limited, missing some supporting finance signals';
+
+  return {
+    trendClassification,
+    dataCompleteness,
+  };
+}
+
+function buildGymSignals(analysis) {
+  const workoutCount = Number(analysis.meta?.workoutCount || 0);
+  const progressCount = Array.isArray(analysis.data?.progressIndicators) ? analysis.data.progressIndicators.length : 0;
+
+  let consistencyLevel = 'low';
+  if (workoutCount >= 6) {
+    consistencyLevel = 'high';
+  } else if (workoutCount >= 3) {
+    consistencyLevel = 'moderate';
+  }
+
+  const progressionSignal = progressCount > 0
+    ? 'recent strength progression is present'
+    : 'recent progression signal is weak';
+  const plateauSignal = progressCount > 0
+    ? 'Some lifts are still moving up, so no strong plateau is visible right now.'
+    : 'Lack of recent progression suggests a possible plateau or insufficient training signal.';
+
+  return {
+    consistencyLevel,
+    progressionSignal,
+    plateauSignal,
+  };
+}
+
+function wantsCategoryDetails(message) {
+  return /\b(category|categories|breakdown|where|spent on)\b/.test(message) || wantsTrends(message);
+}
+
+function wantsTrends(message) {
+  return /\b(trend|trends|change|changes|increase|decrease|spending|spend|budget|summary|analy[sz]e)\b/.test(message);
+}
+
+function wantsAnomalies(message) {
+  return /\b(anomal|unusual|weird|largest|biggest|transaction|transactions|expense|expenses|spend|spent)\b/.test(message) || !message;
+}
+
+function wantsProgress(message) {
+  return /\b(progress|improv|strong|strength|lift|lifting|performance|gym|workout|exercise)\b/.test(message) || !message;
+}
+
+function wantsPlateaus(message) {
+  return /\b(plateau|stuck|stall|not improving|slow progress|progress)\b/.test(message);
+}
+
+function wantsFrequency(message) {
+  return /\b(frequency|often|consisten|routine|how much|how often)\b/.test(message);
+}
+
+function dedupeLines(lines) {
+  return lines.filter((line, index) => lines.indexOf(line) === index);
 }
 
 module.exports = {

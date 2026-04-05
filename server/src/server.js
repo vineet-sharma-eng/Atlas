@@ -1,7 +1,7 @@
 const createApp = require('./app');
 const config = require('./config');
 const logger = require('./utils/logger');
-const { startCronJobs } = require('../services/scheduler/cron');
+const { startBackgroundJobs } = require('./jobs/cron');
 
 function startServer() {
   const app = createApp();
@@ -12,7 +12,7 @@ function startServer() {
       model: config.openAiModelId,
       ollamaModel: config.ollama.model,
     });
-    startCronJobs();
+    startBackgroundJobs();
   });
 
   return server;

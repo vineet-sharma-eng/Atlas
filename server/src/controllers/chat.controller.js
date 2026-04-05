@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 
 const config = require('../config');
-const routerService = require('../services/router.service');
+const orchestratorService = require('../services/orchestrator.service');
 const { AppError } = require('../utils/errorHandler');
 
 async function createChatCompletion(req, res, next) {
@@ -26,7 +26,7 @@ async function createChatCompletion(req, res, next) {
       throw new AppError('A non-empty user message is required', 400);
     }
 
-    const orchestration = await routerService.orchestrateChat({
+    const orchestration = await orchestratorService.orchestrateChat({
       message: latestUserMessage.content.trim(),
       requestId: req.requestId,
     });
