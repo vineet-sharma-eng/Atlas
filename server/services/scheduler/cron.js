@@ -1,28 +1,29 @@
 const cron = require('node-cron');
 
 const { generateFinanceInsights } = require('../insights/financeInsights');
+const logger = require('../../src/utils/logger');
 
 let cronStarted = false;
 
 function startCronJobs() {
   if (cronStarted) {
-    console.log('[cron] Scheduler already started. Skipping duplicate registration.');
+    logger.info('Scheduler already started, skipping duplicate registration');
     return;
   }
 
   const schedule = process.env.NODE_ENV === 'development' ? '* * * * *' : '0 9 * * 0';
 
-  console.log(`[cron] Starting finance insights scheduler with schedule: ${schedule}`);
+  logger.info('Starting finance insights scheduler', { schedule });
   cronStarted = true;
 
   cron.schedule(schedule, async () => {
-    console.log('[cron] Running weekly finance insights...');
+    logger.info('Running scheduled finance insights');
 
     try {
       await generateFinanceInsights();
-      console.log('[cron] Weekly finance insights generated successfully.');
+      logger.info('Scheduled finance insights completed successfully');
     } catch (error) {
-      console.error('[cron] Weekly finance insights failed:', error);
+      logger.error('Scheduled finance insights failed', { error: error.message });
     }
   });
 }

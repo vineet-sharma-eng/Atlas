@@ -108,12 +108,13 @@ async function getAnalysis(req, res, next) {
           categoryBreakdown: [],
           largestTransaction: null,
         },
-        meta: {
-          periodDays: days,
-          transactionCount: 0,
-        },
-      });
-    }
+      meta: {
+        periodDays: days,
+        transactionCount: 0,
+        trend: null,
+      },
+    });
+  }
 
     const summary = buildFinanceSummary({
       days,
@@ -143,6 +144,7 @@ async function getAnalysis(req, res, next) {
       meta: {
         periodDays: days,
         transactionCount: analysisData.stats.transactionCount,
+        trend: buildTrendMeta(analysisData.comparison),
       },
     });
   } catch (error) {
@@ -205,6 +207,22 @@ function formatPercentage(value) {
   }
 
   return `${Number(value).toFixed(1)}%`;
+}
+
+function buildTrendMeta(comparison) {
+  if (!comparison) {
+    return null;
+  }
+
+  const changeAmount = roundCurrency(comparison.changeAmount);
+  const direction = changeAmount > 0 ? 'up' : changeAmount < 0 ? 'down' : 'flat';
+
+  return {
+    direction,
+    changeAmount,
+    changePercent: comparison.changePercent === null ? null : Number(Number(comparison.changePercent).toFixed(1)),
+    previousTotalSpent: roundCurrency(comparison.previousTotalSpent),
+  };
 }
 
 async function triggerInsights(req, res, next) {
