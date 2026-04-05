@@ -22,6 +22,7 @@ export function SessionDetail({
 }) {
   const [expandedExerciseIds, setExpandedExerciseIds] = useState({});
   const [mobileSelectedExerciseId, setMobileSelectedExerciseId] = useState(null);
+  const isDesktop = useMinWidthMatch('(min-width: 768px)');
   const shouldRenderMobileDetail = isOpen || isLoadingSessionDetail || Boolean(sessionDetail);
   const mobileSelectedExercise = sessionDetail?.exercises.find(
     (exercise) => exercise.session_exercise_id === mobileSelectedExerciseId,
@@ -29,9 +30,18 @@ export function SessionDetail({
   const mobileInsightKey = getExerciseInsightKey(mobileSelectedExercise, sessionDetail?.template_id);
 
   useEffect(() => {
-    setExpandedExerciseIds({});
+    if (!sessionDetail || !isDesktop) {
+      setExpandedExerciseIds({});
+      return;
+    }
+
+    setExpandedExerciseIds(
+      Object.fromEntries(
+        sessionDetail.exercises.map((exercise) => [exercise.session_exercise_id, true]),
+      ),
+    );
     setMobileSelectedExerciseId(null);
-  }, [sessionDetail?.id]);
+  }, [isDesktop, sessionDetail]);
 
   useEffect(() => {
     if (!sessionDetail) {
@@ -57,147 +67,132 @@ export function SessionDetail({
     }
   }, [expandedExerciseIds, mobileSelectedExercise, onLoadExerciseInsight, sessionDetail]);
 
-  const detailContent = (
-    <section className="flex h-full flex-col rounded-[22px] border border-atlas-line/80 bg-atlas-panel shadow-panel">
-      {isLoadingSessionDetail ? (
-        <div className="p-6 text-sm text-atlas-slate">Loading session detail...</div>
-      ) : !sessionDetail ? (
-        <div className="p-6 text-sm text-atlas-slate">
-          Select a session to inspect exercises and logged sets.
+  const detailBody = isLoadingSessionDetail ? (
+    <div className="p-2 text-sm text-atlas-slate">Loading session detail...</div>
+  ) : !sessionDetail ? (
+    <div className="p-2 text-sm text-atlas-slate">
+      Select a session to inspect exercises and logged sets.
+    </div>
+  ) : (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 border-b border-atlas-line/80 pb-4">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
+            Session detail
+          </div>
+          <h3 className="mt-2 text-2xl font-semibold text-atlas-ink">{sessionDetail.template_name}</h3>
+          <div className="mt-2 text-sm text-atlas-slate">
+            {formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}
+            {' - '}
+            {sessionDetail.has_logged_sets ? `${sessionDetail.exercise_count} exercises` : 'No sets logged'}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 disabled:opacity-60"
+          disabled={pendingDeleteSessionId === sessionDetail.id}
+          onClick={() => {
+            const confirmed = window.confirm(
+              `Delete ${sessionDetail.template_name} on ${formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}? This removes the entire session, all exercises, and all sets.`,
+            );
+
+            if (confirmed) {
+              void onDeleteSession(sessionDetail.id).then(() => onClose());
+            }
+          }}
+        >
+          {pendingDeleteSessionId === sessionDetail.id ? 'Deleting...' : 'Delete session'}
+        </button>
+      </div>
+
+      {sessionDetail.exercises.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-mist px-4 py-5 text-sm text-atlas-slate">
+          No exercises logged in this session.
         </div>
       ) : (
-        <>
-          <div className="flex items-start justify-between gap-3 border-b border-atlas-line/80 px-4 py-4">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate">
-                Session detail
-              </div>
-              <h3 className="mt-2 text-2xl font-semibold text-atlas-ink">{sessionDetail.template_name}</h3>
-              <div className="mt-2 text-sm text-atlas-slate">
-                {formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}
-                {' - '}
-                {sessionDetail.has_logged_sets ? `${sessionDetail.exercise_count} exercises` : 'No sets logged'}
-              </div>
-            </div>
-            <div className="flex flex-col items-end gap-2">
-              <button
-                type="button"
-                className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 disabled:opacity-60"
-                disabled={pendingDeleteSessionId === sessionDetail.id}
-                onClick={() => {
-                  const confirmed = window.confirm(
-                    `Delete ${sessionDetail.template_name} on ${formatLocalDate(sessionDetail.date, { month: 'short', day: 'numeric', year: 'numeric' })}? This removes the entire session, all exercises, and all sets.`,
-                  );
+        <div className="space-y-3">
+          {sessionDetail.exercises.map((exercise) => {
+            const isExpanded = isDesktop || expandedExerciseIds[exercise.session_exercise_id] === true;
+            const insightKey = getExerciseInsightKey(exercise, sessionDetail.template_id);
 
-                  if (confirmed) {
-                    void onDeleteSession(sessionDetail.id).then(() => onClose());
-                  }
-                }}
+            return (
+              <article
+                key={exercise.session_exercise_id}
+                className="rounded-[22px] border border-atlas-line/80 bg-atlas-night px-4 py-4"
               >
-                {pendingDeleteSessionId === sessionDetail.id ? 'Deleting...' : 'Delete session'}
-              </button>
-              <button
-                type="button"
-                className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink md:hidden"
-                onClick={onClose}
-              >
-                Back
-              </button>
-            </div>
-          </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => {
+                      if (isDesktop) {
+                        return;
+                      }
 
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            {sessionDetail.exercises.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-mist px-4 py-5 text-sm text-atlas-slate">
-                No exercises logged in this session.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {sessionDetail.exercises.map((exercise) => {
-                  const isExpanded = expandedExerciseIds[exercise.session_exercise_id] === true;
-                  const insightKey = getExerciseInsightKey(exercise, sessionDetail.template_id);
+                      setMobileSelectedExerciseId(exercise.session_exercise_id);
+                    }}
+                  >
+                    <div className={`${isExpanded ? 'whitespace-normal' : 'truncate'} text-lg font-semibold text-atlas-ink`}>
+                      {formatExerciseName(exercise.exercise_name)}
+                    </div>
+                    <div className="mt-2 text-xs uppercase tracking-[0.14em] text-atlas-slate">
+                      {exercise.muscle_group || 'Accessory'}
+                    </div>
+                  </button>
 
-                  return (
-                    <article
-                      key={exercise.session_exercise_id}
-                      className="rounded-[22px] border border-atlas-line/80 bg-atlas-night px-4 py-4"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 text-left"
-                          onClick={() => {
-                            if (window.matchMedia('(min-width: 768px)').matches) {
-                              setExpandedExerciseIds((current) => ({
-                                ...current,
-                                [exercise.session_exercise_id]: !isExpanded,
-                              }));
-                              return;
-                            }
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 disabled:opacity-60"
+                    disabled={pendingDeleteSessionExerciseId === exercise.session_exercise_id}
+                    onClick={() => {
+                      const confirmed = window.confirm(
+                        `Delete ${formatExerciseName(exercise.exercise_name)} from this session? This removes the exercise and all of its sets from history.`,
+                      );
 
-                            setMobileSelectedExerciseId(exercise.session_exercise_id);
-                          }}
-                        >
-                          <div className={`${isExpanded ? 'whitespace-normal' : 'truncate'} text-lg font-semibold text-atlas-ink`}>
-                            {formatExerciseName(exercise.exercise_name)}
-                          </div>
-                          <div className="mt-2 text-xs uppercase tracking-[0.14em] text-atlas-slate">
-                            {exercise.muscle_group || 'Accessory'}
-                          </div>
-                        </button>
+                      if (confirmed) {
+                        void onDeleteSessionExercise(exercise.session_exercise_id);
+                      }
+                    }}
+                  >
+                    {pendingDeleteSessionExerciseId === exercise.session_exercise_id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
 
-                        <button
-                          type="button"
-                          className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 disabled:opacity-60"
-                          disabled={pendingDeleteSessionExerciseId === exercise.session_exercise_id}
-                          onClick={() => {
-                            const confirmed = window.confirm(
-                              `Delete ${formatExerciseName(exercise.exercise_name)} from this session? This removes the exercise and all of its sets from history.`,
-                            );
-
-                            if (confirmed) {
-                              void onDeleteSessionExercise(exercise.session_exercise_id);
-                            }
-                          }}
-                        >
-                          {pendingDeleteSessionExerciseId === exercise.session_exercise_id ? 'Deleting...' : 'Delete'}
-                        </button>
-                      </div>
-
-                      {isExpanded ? (
-                        <div className="mt-4 hidden space-y-3 md:block">
-                          <ExerciseDetailContent
-                            exercise={exercise}
-                            insight={exerciseInsightById[insightKey] || null}
-                            isLoading={loadingExerciseInsightById[insightKey] === true}
-                            error={exerciseInsightErrorById[insightKey] || ''}
-                          />
-                        </div>
-                      ) : null}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </>
+                {isExpanded ? (
+                  <div className="mt-4 hidden space-y-3 md:block">
+                    <ExerciseDetailContent
+                      exercise={exercise}
+                      insight={exerciseInsightById[insightKey] || null}
+                      isLoading={loadingExerciseInsightById[insightKey] === true}
+                      error={exerciseInsightErrorById[insightKey] || ''}
+                    />
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
       )}
-    </section>
+    </div>
   );
 
   return (
     <>
       <div className="hidden md:block">
-        {detailContent}
+        <section className="flex h-full flex-col rounded-[22px] border border-atlas-line/80 bg-atlas-panel shadow-panel">
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            {detailBody}
+          </div>
+        </section>
       </div>
 
-      {shouldRenderMobileDetail ? (
-        <div className="md:hidden">
-          <div className="overflow-hidden rounded-[24px]">
-            {detailContent}
-          </div>
-        </div>
-      ) : null}
+      <BottomSheet
+        open={!isDesktop && shouldRenderMobileDetail}
+        title={sessionDetail ? sessionDetail.template_name : 'Session detail'}
+        onClose={onClose}
+      >
+        {detailBody}
+      </BottomSheet>
 
       <BottomSheet
         open={Boolean(mobileSelectedExercise)}
@@ -215,6 +210,25 @@ export function SessionDetail({
       </BottomSheet>
     </>
   );
+}
+
+function useMinWidthMatch(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+
+    function handleChange(event) {
+      setMatches(event.matches);
+    }
+
+    setMatches(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [query]);
+
+  return matches;
 }
 
 function Metric({ label, value }) {
