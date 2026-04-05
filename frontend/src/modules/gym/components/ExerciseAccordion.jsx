@@ -484,16 +484,19 @@ export function ExerciseAccordion({
                 Add to template
               </button>
             ) : null}
-            {isSessionEditable && exercise.session_exercise_id && !isSkipped ? (
+            {isSessionEditable && exercise.session_exercise_id ? (
               <button
                 type="button"
                 className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink"
                 onClick={(event) => {
                   event.stopPropagation();
-                  void onUpdateExerciseStatus(exercise.session_exercise_id, 'skipped');
+                  void onUpdateExerciseStatus(
+                    exercise.session_exercise_id,
+                    isSkipped ? 'pending' : 'skipped',
+                  );
                 }}
               >
-                Skip exercise
+                {isSkipped ? 'Unskip exercise' : 'Skip exercise'}
               </button>
             ) : null}
             {isSessionEditable && exercise.session_exercise_id ? (

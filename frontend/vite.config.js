@@ -11,9 +11,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/atlas': apiTarget,
       '/finance': apiTarget,
       '/gym': apiTarget,
       '/health': apiTarget,
+      '/motivation': apiTarget,
+      '/v1': apiTarget,
     },
   },
   build: {

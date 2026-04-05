@@ -228,8 +228,8 @@ async function updateExerciseStatus(req, res, next) {
     const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
     const status = String(req.body.status || '').trim();
 
-    if (!['completed', 'skipped'].includes(status)) {
-      return res.status(400).json({ error: 'status must be completed or skipped' });
+    if (!['pending', 'completed', 'skipped'].includes(status)) {
+      return res.status(400).json({ error: 'status must be pending, completed, or skipped' });
     }
 
     return res.status(200).json(await updateGymExerciseStatus(exerciseId, status));
