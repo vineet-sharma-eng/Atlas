@@ -1,4 +1,5 @@
 // backend/index.js
+const cors = require('cors');
 const express = require('express');
 const dotenv = require('dotenv');
 const path = require('path');
@@ -13,7 +14,12 @@ const app = express();
 const port = Number(process.env.PORT) || 5001;
 const frontendDistPath = path.resolve(__dirname, '..', 'frontend', 'dist');
 const isProduction = process.env.NODE_ENV === 'production';
+const corsOptions = {
+  origin: true,
+  credentials: true,
+};
 
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.get('/health', (req, res) => {
