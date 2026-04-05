@@ -9,6 +9,8 @@ const {
   duplicateTemplate,
   endGymSession,
   getActiveSessionState,
+  getGymAnalysisData,
+  getGymHistory,
   getExerciseHistory,
   getExerciseProgress,
   getGymSessionDetail,
@@ -27,6 +29,53 @@ const {
   updateTemplateName,
   updateTemplateSet,
 } = require('../../db/gym');
+
+async function getAnalysis(req, res, next) {
+  try {
+    const days = req.query.days === undefined
+      ? 14
+      : parseBoundedInteger(req.query.days, 'days', { min: 7, max: 14 });
+    const analysis = await getGymAnalysisData({
+      days,
+      timeZone: getUserTimeZone(req),
+    });
+
+    return res.status(200).json({
+      summary: buildGymAnalysisSummary(analysis, days),
+      data: {
+        topExercises: analysis.topExercises,
+        recentWorkouts: analysis.recentWorkouts,
+        progressIndicators: analysis.progressIndicators,
+      },
+      meta: {
+        periodDays: days,
+        workoutCount: analysis.workoutCount,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getHistory(req, res, next) {
+  try {
+    const entries = await getGymHistory(20);
+
+    return res.status(200).json({
+      summary: entries.length === 0
+        ? 'No gym history found yet.'
+        : `Returned ${entries.length} recent gym log entries.`,
+      data: {
+        entries,
+      },
+      meta: {
+        count: entries.length,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
 
 async function listTemplates(req, res, next) {
   try {
@@ -494,6 +543,18 @@ function parsePositiveInteger(value, fieldName) {
   return parsed;
 }
 
+function parseBoundedInteger(value, fieldName, { min, max }) {
+  const parsed = parsePositiveInteger(value, fieldName);
+
+  if (parsed < min || parsed > max) {
+    const error = new Error(`${fieldName} must be between ${min} and ${max}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return parsed;
+}
+
 function parseOptionalInteger(value, fieldName) {
   if (value === null || value === undefined || value === '') {
     return null;
@@ -541,7 +602,27 @@ function getUserTimeZone(req) {
   return String(headerValue || '').trim() || 'UTC';
 }
 
+function buildGymAnalysisSummary(analysis, days) {
+  if (analysis.workoutCount === 0) {
+    return `No workouts logged in the last ${days} days.`;
+  }
+
+  const parts = [`Logged ${analysis.workoutCount} workout${analysis.workoutCount === 1 ? '' : 's'} in the last ${days} days`];
+
+  if (analysis.topExercises[0]) {
+    parts.push(`most frequent exercise was ${analysis.topExercises[0].exercise}`);
+  }
+
+  if (analysis.progressIndicators[0]) {
+    parts.push(analysis.progressIndicators[0].trend.toLowerCase());
+  }
+
+  return `${parts.join(', ')}.`;
+}
+
 module.exports = {
+  getAnalysis,
+  getHistory,
   listTemplates,
   getExerciseCatalogHandler,
   listRecentExercisesHandler,

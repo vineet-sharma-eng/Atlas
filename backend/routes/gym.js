@@ -9,10 +9,12 @@ const {
   deleteSessionHandler,
   duplicateTemplateHandler,
   endSession,
+  getAnalysis,
   getExerciseHistoryHandler,
   getExerciseProgressHandler,
   getActiveSession,
   getExerciseCatalogHandler,
+  getHistory,
   getTemplateExerciseAlternatesHandler,
   listRecentExercisesHandler,
   getSessionDetail,
@@ -32,6 +34,8 @@ const {
 
 const router = express.Router();
 
+router.get('/analysis', getAnalysis);
+router.get('/history', getHistory);
 router.get('/templates', listTemplates);
 router.get('/exercises', getExerciseCatalogHandler);
 router.get('/exercises/recent', listRecentExercisesHandler);

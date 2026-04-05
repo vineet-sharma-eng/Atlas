@@ -9,7 +9,9 @@
     "build": "vite build --config frontend/vite.config.js",
     "start": "node backend/index.js",
     "install:all": "yarn install",
-    "db:setup": "node backend/db/migrations.js"
+    "db:setup": "node backend/db/migrations.js",
+    "atlas": "docker compose up -d && yarn && yarn dev",
+    "close": "docker compose down"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.4.1",

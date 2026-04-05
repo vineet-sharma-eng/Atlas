@@ -4,7 +4,6 @@ const path = require('path');
 
 const { getTransactionAnalysisData, insertTransactions } = require('../../db/transactions');
 const { getLatestInsights } = require('../../db/insights');
-const { generate } = require('../../services/ai/ollama');
 const { generateFinanceInsights } = require('../../services/insights/financeInsights');
 const { parseGooglePayTransactions } = require('../../services/parser/googlePayTransactionParser');
 const { extractPdfText } = require('../../services/parser/pdfExtractor');
@@ -96,68 +95,54 @@ function isPdfUpload(file) {
 
 async function getAnalysis(req, res, next) {
   try {
-    const days = parseDays(req.query.days);
+    const days = parseDays(req.query.days, 7);
     const analysisData = await getTransactionAnalysisData(days);
+    const topCategory = analysisData.categoryBreakdown[0] || null;
 
     if (analysisData.stats.transactionCount === 0) {
       return res.status(200).json({
-        summary: 'No transactions found for the selected period.',
-        insights: 'There is not enough finance data yet to analyze.',
+        summary: `No spending found in the last ${days} days.`,
+        data: {
+          totalSpent: 0,
+          topCategory: null,
+          categoryBreakdown: [],
+          largestTransaction: null,
+        },
         meta: {
-          total_spent: 0,
-          top_categories: [],
-          top_category: null,
-          largest_transaction: null,
-          anomaly_threshold: 0,
-          anomalies: [],
-          transfer_count: analysisData.transferCount || 0,
-          comparison: analysisData.comparison,
-          category_trends: [],
-          days,
+          periodDays: days,
+          transactionCount: 0,
         },
       });
     }
 
-    const anomalies = findAnomalies(
-      analysisData.recentTransactions,
-      analysisData.stats.averageAmount
-    );
-    const topCategory = analysisData.categoryBreakdown[0] || null;
-    const prompt = buildFinanceAnalysisPrompt({
+    const summary = buildFinanceSummary({
       days,
       totalSpent: analysisData.totalSpent,
-      categoryBreakdown: analysisData.categoryBreakdown,
-      recentTransactions: analysisData.recentTransactions,
-      largestTransaction: analysisData.largestTransaction,
-      averageAmount: analysisData.stats.averageAmount,
-      anomalies,
-      transferCount: analysisData.transferCount,
-      comparison: analysisData.comparison,
-      categoryTrends: analysisData.categoryTrends,
-    });
-    const insights = await generate(prompt);
-    const summary = buildSummary(
-      analysisData.totalSpent,
       topCategory,
-      analysisData.largestTransaction,
-      anomalies,
-      analysisData.comparison
-    );
+      comparison: analysisData.comparison,
+      largestTransaction: analysisData.largestTransaction,
+    });
 
     return res.status(200).json({
       summary,
-      insights,
+      data: {
+        totalSpent: roundCurrency(analysisData.totalSpent),
+        topCategory: topCategory ? topCategory.category : null,
+        categoryBreakdown: analysisData.categoryBreakdown.slice(0, 5).map((item) => ({
+          category: item.category,
+          total: roundCurrency(item.total),
+        })),
+        largestTransaction: analysisData.largestTransaction
+          ? {
+              amount: roundCurrency(analysisData.largestTransaction.amount),
+              description: analysisData.largestTransaction.description,
+              date: analysisData.largestTransaction.date,
+            }
+          : null,
+      },
       meta: {
-        total_spent: analysisData.totalSpent,
-        top_categories: analysisData.categoryBreakdown.slice(0, 5),
-        top_category: topCategory,
-        largest_transaction: analysisData.largestTransaction,
-        anomaly_threshold: toCurrencyValue(analysisData.stats.averageAmount * 2),
-        anomalies,
-        transfer_count: analysisData.transferCount,
-        comparison: analysisData.comparison,
-        category_trends: analysisData.categoryTrends.slice(0, 10),
-        days,
+        periodDays: days,
+        transactionCount: analysisData.stats.transactionCount,
       },
     });
   } catch (error) {
@@ -165,9 +150,9 @@ async function getAnalysis(req, res, next) {
   }
 }
 
-function parseDays(value) {
+function parseDays(value, defaultDays) {
   if (value === undefined) {
-    return null;
+    return defaultDays;
   }
 
   const days = Number.parseInt(value, 10);
@@ -181,156 +166,37 @@ function parseDays(value) {
   return days;
 }
 
-function buildFinanceAnalysisPrompt({
+function buildFinanceSummary({
   days,
   totalSpent,
-  categoryBreakdown,
-  recentTransactions,
-  largestTransaction,
-  averageAmount,
-  anomalies,
-  transferCount,
-  comparison,
-  categoryTrends,
-}) {
-  const periodLabel = days ? `last ${days} days` : 'all available transaction history';
-  const topCategories = categoryBreakdown
-    .slice(0, 5)
-    .map((item) => `- ${item.category}: ${toCurrencyValue(item.total)}`)
-    .join('\n');
-  const recentItems = recentTransactions
-    .slice(0, 10)
-    .map(
-      (item) =>
-        `- ${item.date}: ${item.description} (${toCurrencyValue(item.amount)})`
-    )
-    .join('\n');
-  const anomalyItems = anomalies.length
-    ? anomalies
-        .map(
-          (item) =>
-            `- ${item.date}: ${item.description} (${toCurrencyValue(item.amount)})`
-        )
-        .join('\n')
-    : '- No obvious high-value anomalies detected';
-  const trendText = comparison
-    ? `Current period spend: ${toCurrencyValue(totalSpent)}
-Previous comparable period spend: ${toCurrencyValue(comparison.previousTotalSpent)}
-Change: ${formatSignedAmount(comparison.changeAmount)} (${formatPercentage(
-        comparison.changePercent
-      )})`
-    : '- No period-over-period comparison available';
-  const categoryTrendText = categoryTrends.length
-    ? categoryTrends
-        .slice(0, 10)
-        .map(
-          (item) =>
-            `- ${item.category}: ${toCurrencyValue(item.currentTotal)} vs ${toCurrencyValue(
-              item.previousTotal
-            )} (${formatSignedAmount(item.changeAmount)}, ${formatPercentage(
-              item.changePercent
-            )})`
-        )
-        .join('\n')
-    : '- No category trend data available';
-
-  return [
-    'You are analyzing personal finance data for Atlas.',
-    `Use only the structured information below for the ${periodLabel}.`,
-    'Ignore transfers; only analyze real expenses.',
-    `Excluded transfers from analysis: ${transferCount || 0}.`,
-    'Explain trends clearly using numbers. Focus on what changed week-over-week.',
-    '',
-    `Total spend: ${toCurrencyValue(totalSpent)}`,
-    `Average transaction amount: ${toCurrencyValue(averageAmount)}`,
-    '',
-    'Trend comparison:',
-    trendText,
-    '',
-    'Top categories:',
-    topCategories || '- No category data',
-    '',
-    'Category trends:',
-    categoryTrendText,
-    '',
-    'Recent transactions:',
-    recentItems || '- No recent transactions',
-    '',
-    'Largest transaction:',
-    largestTransaction
-      ? `- ${largestTransaction.date}: ${largestTransaction.description} (${toCurrencyValue(
-          largestTransaction.amount
-        )}) in ${largestTransaction.category || 'uncategorized'}`
-      : '- No transaction found',
-    '',
-    'Potential anomalies:',
-    anomalyItems,
-    '',
-    'Provide:',
-    '1. Spending patterns',
-    '2. Category insights',
-    '3. Unusual behavior',
-    '4. Actionable suggestions',
-    '',
-    'Keep the analysis concise but useful.',
-  ].join('\n');
-}
-
-function buildSummary(
-  totalSpent,
   topCategory,
+  comparison,
   largestTransaction,
-  anomalies,
-  comparison
-) {
-  const parts = [`Total spend is ${toCurrencyValue(totalSpent)}`];
+}) {
+  const parts = [`Spent ${formatCurrency(totalSpent)} in the last ${days} days`];
 
   if (topCategory) {
-    parts.push(
-      `top category is ${topCategory.category} at ${toCurrencyValue(topCategory.total)}`
-    );
+    parts.push(`top category was ${topCategory.category} (${formatCurrency(topCategory.total)})`);
+  }
+
+  if (comparison && comparison.changePercent !== null) {
+    const direction = comparison.changeAmount > 0 ? 'up' : comparison.changeAmount < 0 ? 'down' : 'flat';
+    parts.push(`${direction} ${formatPercentage(Math.abs(comparison.changePercent))} versus the previous period`);
   }
 
   if (largestTransaction) {
-    parts.push(
-      `largest transaction is ${toCurrencyValue(largestTransaction.amount)} for ${largestTransaction.description}`
-    );
-  }
-
-  if (anomalies.length > 0) {
-    parts.push(`${anomalies.length} high-value transaction(s) stand out`);
-  }
-
-  if (comparison) {
-    parts.push(
-      `period-over-period change is ${formatSignedAmount(
-        comparison.changeAmount
-      )} (${formatPercentage(comparison.changePercent)})`
-    );
+    parts.push(`largest expense was ${formatCurrency(largestTransaction.amount)} for ${largestTransaction.description}`);
   }
 
   return `${parts.join(', ')}.`;
 }
 
-function findAnomalies(transactions, averageAmount) {
-  const threshold = averageAmount * 2;
-
-  if (threshold <= 0) {
-    return [];
-  }
-
-  return transactions
-    .filter((transaction) => transaction.amount >= threshold)
-    .slice(0, 5);
+function roundCurrency(value) {
+  return Number(Number(value || 0).toFixed(2));
 }
 
-function toCurrencyValue(value) {
-  return Number(value || 0).toFixed(2);
-}
-
-function formatSignedAmount(value) {
-  const amount = Number(value || 0);
-  return `${amount >= 0 ? '+' : '-'}${Math.abs(amount).toFixed(2)}`;
+function formatCurrency(value) {
+  return roundCurrency(value).toFixed(2);
 }
 
 function formatPercentage(value) {
@@ -338,7 +204,7 @@ function formatPercentage(value) {
     return 'N/A';
   }
 
-  return `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}%`;
+  return `${Number(value).toFixed(1)}%`;
 }
 
 async function triggerInsights(req, res, next) {
