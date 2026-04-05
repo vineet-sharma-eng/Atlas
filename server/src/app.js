@@ -45,6 +45,14 @@ function createApp() {
     next();
   });
 
+  if (config.isProduction) {
+    app.use(
+      express.static(config.frontendDistPath, {
+        index: false,
+      }),
+    );
+  }
+
   app.use(cors(createCorsOptions()));
   app.use(express.json({ limit: config.server.jsonLimit }));
   app.use(express.urlencoded({ extended: false }));
@@ -61,12 +69,13 @@ function createApp() {
   app.use(routes);
 
   if (config.isProduction) {
-    app.use(express.static(config.frontendDistPath));
     app.get('/{*path}', (req, res, next) => {
       if (
         req.path.startsWith('/finance') ||
         req.path.startsWith('/gym') ||
+        req.path.startsWith('/atlas') ||
         req.path.startsWith('/v1') ||
+        req.path === '/motivation' ||
         req.path === '/health'
       ) {
         return next();

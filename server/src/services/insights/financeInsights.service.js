@@ -85,12 +85,13 @@ function normalizeInsight(candidate, type) {
   const title = String(candidate.title || '').trim();
   const content = String(candidate.content || '').trim();
   const priority = String(candidate.priority || 'medium').trim().toLowerCase();
+  const subtype = String(candidate.subtype || '').trim().toLowerCase();
 
   if (!title || !content || !['high', 'medium', 'low'].includes(priority)) {
     return null;
   }
 
-  return { type, title, content, priority };
+  return { domain: type, subtype: subtype || null, title, content, priority };
 }
 
 function parseJsonArray(raw) {

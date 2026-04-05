@@ -10,8 +10,8 @@
     "start": "node server/src/server.js",
     "install:all": "yarn install",
     "db:setup": "node server/db/migrations.js",
-    "atlas": "docker compose up -d && yarn && yarn dev",
-    "close": "docker compose down"
+    "up": "docker compose up -d && yarn && yarn dev",
+    "down": "docker compose down"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.4.1",

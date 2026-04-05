@@ -45,7 +45,7 @@ async function runGymTipsJob({ requestId = 'background-gym-tips' } = {}) {
 
   const inserted = await tipsRepo.insertManyTips(
     tips.map((content) => ({
-      type: 'gym',
+      domain: 'gym',
       content,
       validUntil: getValidUntil(config.background.tipsTtlHours),
     })),

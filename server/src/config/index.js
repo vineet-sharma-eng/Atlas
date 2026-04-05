@@ -19,15 +19,29 @@ function parseInteger(value, fallback) {
 
 function parseOrigins(value) {
   const raw = String(value || '').trim();
+  const configuredOrigins = [];
 
-  if (!raw) {
-    return DEFAULT_ALLOWED_ORIGINS;
+  if (process.env.RENDER_EXTERNAL_URL) {
+    configuredOrigins.push(String(process.env.RENDER_EXTERNAL_URL).trim());
   }
 
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  if (process.env.APP_BASE_URL) {
+    configuredOrigins.push(String(process.env.APP_BASE_URL).trim());
+  }
+
+  if (!raw) {
+    return [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...configuredOrigins.filter(Boolean)])];
+  }
+
+  return [
+    ...new Set([
+      ...raw
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      ...configuredOrigins.filter(Boolean),
+    ]),
+  ];
 }
 
 const port = parseInteger(process.env.PORT, 5001);

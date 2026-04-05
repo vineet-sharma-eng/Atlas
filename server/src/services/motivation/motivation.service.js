@@ -44,6 +44,7 @@ async function runMotivationJob({ requestId = 'background-motivation' } = {}) {
 
   const inserted = await motivationRepo.insertManyMotivation(
     quotes.map((content) => ({
+      domain: 'general',
       content,
       source,
       validUntil: getValidUntil(config.background.motivationTtlHours),
@@ -63,10 +64,11 @@ async function getMotivationQuote() {
 
   return {
     id: null,
+    domain: 'general',
     content: fallback.getFallbackQuotes()[0],
     source: 'fallback',
-    created_at: new Date().toISOString(),
-    valid_until: null,
+    createdAt: new Date().toISOString(),
+    validUntil: null,
   };
 }
 
