@@ -4,10 +4,9 @@ export async function getAtlasDashboard() {
   return request('/atlas/dashboard');
 }
 
-async function request(path, options = {}) {
+export async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
-      'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
     ...options,
@@ -20,8 +19,10 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message =
-      typeof payload === 'object' && payload !== null && payload.error?.message
-        ? payload.error.message
+      typeof payload === 'object' && payload !== null && typeof payload.error === 'string'
+        ? payload.error
+        : typeof payload === 'object' && payload !== null && payload.error?.message
+          ? payload.error.message
         : 'Request failed';
     throw new Error(message);
   }

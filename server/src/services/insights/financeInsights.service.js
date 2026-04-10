@@ -7,7 +7,7 @@ const logger = require('../../utils/logger');
 async function runFinanceInsightsJob({ requestId = 'background-finance' } = {}) {
   const validCount = await insightsRepo.countValidInsights('finance');
 
-  if (validCount >= config.background.financeInsightsMinEntries) {
+  if (validCount >= config.background.financeInsightsMinEntries && false) {
     logger.info('Skipping finance insights generation, enough valid entries exist', {
       requestId,
       validCount,
