@@ -2,7 +2,12 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 
-const { getTransactionAnalysisData, insertTransactions } = require('../../db/transactions');
+const {
+  getTransactionAnalysisData,
+  insertTransactions,
+  listTransactions,
+  updateTransactionCategory,
+} = require('../../db/transactions');
 const { getLatestInsights } = require('../../db/insights');
 const { generateFinanceInsights } = require('../../services/insights/financeInsights');
 const { parseGooglePayTransactions } = require('../../services/parser/googlePayTransactionParser');
@@ -95,21 +100,25 @@ function isPdfUpload(file) {
 
 async function getAnalysis(req, res, next) {
   try {
-    const days = parseDays(req.query.days, 7);
+    const days = parseDays(req.query.days, 30);
     const analysisData = await getTransactionAnalysisData(days);
     const topCategory = analysisData.categoryBreakdown[0] || null;
+    const periodLabel = formatAnalysisPeriodLabel(days);
 
     if (analysisData.stats.transactionCount === 0) {
       return res.status(200).json({
-        summary: `No spending found in the last ${days} days.`,
+        summary: days === null
+          ? 'No spending found in imported transactions yet.'
+          : `No spending found in the last ${days} days.`,
         data: {
           totalSpent: 0,
           topCategory: null,
           categoryBreakdown: [],
           largestTransaction: null,
-        },
+      },
       meta: {
         periodDays: days,
+        periodLabel,
         transactionCount: 0,
         trend: null,
       },
@@ -118,6 +127,7 @@ async function getAnalysis(req, res, next) {
 
     const summary = buildFinanceSummary({
       days,
+      periodLabel,
       totalSpent: analysisData.totalSpent,
       topCategory,
       comparison: analysisData.comparison,
@@ -143,10 +153,42 @@ async function getAnalysis(req, res, next) {
       },
       meta: {
         periodDays: days,
+        periodLabel,
         transactionCount: analysisData.stats.transactionCount,
         trend: buildTrendMeta(analysisData.comparison),
       },
     });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getTransactions(req, res, next) {
+  try {
+    const days = req.query.days === undefined ? null : parseDays(req.query.days, 30);
+    const limit = parseLimit(req.query.limit, 50);
+    const transactions = await listTransactions({ days, limit });
+
+    return res.status(200).json({
+      transactions,
+      meta: {
+        limit,
+        days,
+        count: transactions.length,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function patchTransactionCategory(req, res, next) {
+  try {
+    const transactionId = req.params.id;
+    const category = req.body?.category;
+    const transaction = await updateTransactionCategory(transactionId, category);
+
+    return res.status(200).json({ transaction });
   } catch (error) {
     return next(error);
   }
@@ -157,7 +199,17 @@ function parseDays(value, defaultDays) {
     return defaultDays;
   }
 
-  const days = Number.parseInt(value, 10);
+  if (value === null) {
+    return defaultDays;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (normalized === 'all') {
+    return null;
+  }
+
+  const days = Number.parseInt(normalized, 10);
 
   if (!Number.isInteger(days) || days <= 0) {
     const error = new Error('days must be a positive integer');
@@ -168,20 +220,37 @@ function parseDays(value, defaultDays) {
   return days;
 }
 
+function parseLimit(value, defaultLimit) {
+  if (value === undefined) {
+    return defaultLimit;
+  }
+
+  const limit = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(limit) || limit <= 0) {
+    const error = new Error('limit must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return limit;
+}
+
 function buildFinanceSummary({
   days,
+  periodLabel,
   totalSpent,
   topCategory,
   comparison,
   largestTransaction,
 }) {
-  const parts = [`Spent ${formatCurrency(totalSpent)} in the last ${days} days`];
+  const parts = [`Spent ${formatCurrency(totalSpent)} ${periodLabel}`];
 
   if (topCategory) {
     parts.push(`top category was ${topCategory.category} (${formatCurrency(topCategory.total)})`);
   }
 
-  if (comparison && comparison.changePercent !== null) {
+  if (comparison && comparison.changePercent !== null && days !== null) {
     const direction = comparison.changeAmount > 0 ? 'up' : comparison.changeAmount < 0 ? 'down' : 'flat';
     parts.push(`${direction} ${formatPercentage(Math.abs(comparison.changePercent))} versus the previous period`);
   }
@@ -191,6 +260,10 @@ function buildFinanceSummary({
   }
 
   return `${parts.join(', ')}.`;
+}
+
+function formatAnalysisPeriodLabel(days) {
+  return days === null ? 'across all imported transactions' : `in the last ${days} days`;
 }
 
 function roundCurrency(value) {
@@ -250,6 +323,8 @@ async function listInsights(req, res, next) {
 module.exports = {
   importPdf,
   getAnalysis,
+  getTransactions,
+  patchTransactionCategory,
   triggerInsights,
   listInsights,
 };

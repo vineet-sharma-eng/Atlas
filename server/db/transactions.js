@@ -18,6 +18,7 @@ async function ensureTransactionsSchema() {
       date DATE NOT NULL,
       amount NUMERIC(12, 2) NOT NULL,
       category TEXT,
+      type TEXT,
       description TEXT NOT NULL,
       source TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -27,6 +28,38 @@ async function ensureTransactionsSchema() {
   await pool.query(`
     ALTER TABLE transactions
     ADD COLUMN IF NOT EXISTS hash TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS type TEXT;
+  `);
+
+  await pool.query(`
+    UPDATE transactions
+    SET type = CASE
+      WHEN amount < 0 THEN 'debit'
+      WHEN amount > 0 AND (
+        LOWER(description) ~ '(received from|receivedfrom|credited by|creditedby|cashback|refund|reward|deposit|added to bank|salary|interest|received)'
+        OR LOWER(category) = 'income'
+      ) THEN 'credit'
+      ELSE 'debit'
+    END
+    WHERE type IS NULL;
+  `);
+
+  await pool.query(`
+    UPDATE transactions
+    SET amount = -ABS(amount)
+    WHERE COALESCE(type, CASE WHEN amount < 0 THEN 'debit' ELSE 'credit' END) = 'debit'
+      AND amount > 0;
+  `);
+
+  await pool.query(`
+    UPDATE transactions
+    SET amount = ABS(amount)
+    WHERE COALESCE(type, CASE WHEN amount < 0 THEN 'debit' ELSE 'credit' END) = 'credit'
+      AND amount < 0;
   `);
 
   await pool.query(`
@@ -68,23 +101,26 @@ async function insertTransactions(transactions, source) {
   const duplicates = [];
 
   for (const transaction of transactions) {
+    const normalizedType = normalizeTransactionType(transaction.type);
+    const signedAmount = normalizeStoredAmount(transaction.amount, normalizedType);
     const hash = generateTransactionHash(
       transaction.date,
-      transaction.amount,
+      signedAmount,
       transaction.description
     );
 
     const insertResult = await pool.query(
       `
-        INSERT INTO transactions (date, amount, category, description, source, hash)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (hash) DO NOTHING
-        RETURNING id, date, amount, category, description, source, hash, created_at
+        INSERT INTO transactions (date, amount, category, type, description, source, hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT ON CONSTRAINT transactions_date_amount_description_key DO NOTHING
+        RETURNING id, date, amount, category, type, description, source, hash, created_at
       `,
       [
         transaction.date,
-        transaction.amount,
+        signedAmount,
         transaction.category || null,
+        normalizedType,
         transaction.description,
         source,
         hash,
@@ -268,9 +304,103 @@ async function getTransactionAnalysisData(days) {
   };
 }
 
+async function listTransactions(options = {}) {
+  await ensureTransactionsTable();
+
+  const limit = normalizePositiveInteger(options.limit, 50, 200);
+  const days = normalizeOptionalPositiveInteger(options.days);
+  const values = [];
+  const conditions = [];
+
+  if (Number.isInteger(days) && days > 0) {
+    values.push(days);
+    conditions.push(`date >= NOW() - ($${values.length}::text || ' days')::interval`);
+  }
+
+  values.push(limit);
+
+  const whereClause = conditions.length
+    ? `WHERE ${conditions.join('\n      AND ')}`
+    : '';
+
+  const result = await pool.query(
+    `
+      SELECT id, date, ABS(amount) AS amount, category, description, source, created_at
+      , COALESCE(type, CASE WHEN amount < 0 THEN 'debit' ELSE 'credit' END) AS type
+      FROM transactions
+      ${whereClause}
+      ORDER BY date DESC, created_at DESC
+      LIMIT $${values.length}
+    `,
+    values
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    date: row.date,
+    amount: Number(row.amount || 0),
+    category: row.category || 'uncategorized',
+    type: row.type,
+    description: row.description,
+    source: row.source,
+    createdAt: row.created_at,
+  }));
+}
+
+async function updateTransactionCategory(id, category) {
+  await ensureTransactionsTable();
+
+  const normalizedId = Number.parseInt(String(id || ''), 10);
+
+  if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+    const error = new Error('transaction id must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedCategory = normalizeCategory(category);
+
+  const result = await pool.query(
+    `
+      UPDATE transactions
+      SET category = $2
+      WHERE id = $1
+      RETURNING
+        id,
+        date,
+        ABS(amount) AS amount,
+        COALESCE(category, 'uncategorized') AS category,
+        COALESCE(type, CASE WHEN amount < 0 THEN 'debit' ELSE 'credit' END) AS type,
+        description,
+        source,
+        created_at
+    `,
+    [normalizedId, normalizedCategory]
+  );
+
+  if (result.rowCount === 0) {
+    const error = new Error('Transaction not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const row = result.rows[0];
+
+  return {
+    id: row.id,
+    date: row.date,
+    amount: Number(row.amount || 0),
+    category: row.category || 'uncategorized',
+    type: row.type,
+    description: row.description,
+    source: row.source,
+    createdAt: row.created_at,
+  };
+}
+
 function buildExpenseWhereClause(days, values) {
   const conditions = [
-    'amount < 0',
+    debitPredicate(),
     "LOWER(description) NOT LIKE '%transfer%'",
     "LOWER(description) NOT LIKE '%self%'",
     "LOWER(description) NOT LIKE '%wallet%'",
@@ -290,7 +420,7 @@ function buildPreviousExpenseWhereClause(days, values) {
   values.push(days * 2);
 
   return `
-    WHERE amount < 0
+    WHERE ${debitPredicate()}
       AND date < NOW() - ($${startIndex}::text || ' days')::interval
       AND date >= NOW() - ($${values.length}::text || ' days')::interval
       AND LOWER(description) NOT LIKE '%transfer%'
@@ -314,6 +444,21 @@ function buildTransferWhereClause(days, values) {
   }
 
   return `WHERE ${conditions.join('\n      ')}`;
+}
+
+function debitPredicate() {
+  return `(COALESCE(type, CASE WHEN amount < 0 THEN 'debit' ELSE 'credit' END) = 'debit')`;
+}
+
+function normalizeTransactionType(type) {
+  return String(type || '').toLowerCase() === 'credit' ? 'credit' : 'debit';
+}
+
+function normalizeStoredAmount(amount, type) {
+  const numericAmount = Number(amount || 0);
+  const absoluteAmount = Math.abs(numericAmount);
+
+  return type === 'credit' ? absoluteAmount : -absoluteAmount;
 }
 
 function calculateCategoryTrends(currentCategories, previousCategories) {
@@ -347,8 +492,39 @@ function calculateCategoryTrends(currentCategories, previousCategories) {
     .sort((left, right) => right.currentTotal - left.currentTotal);
 }
 
+function normalizePositiveInteger(value, fallback, max) {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(parsed, max);
+}
+
+function normalizeOptionalPositiveInteger(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeCategory(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+
+  if (!normalized || normalized === 'uncategorized') {
+    return null;
+  }
+
+  return normalized;
+}
+
 module.exports = {
   ensureTransactionsTable,
   insertTransactions,
   getTransactionAnalysisData,
+  listTransactions,
+  updateTransactionCategory,
 };

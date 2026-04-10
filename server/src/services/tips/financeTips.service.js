@@ -1,14 +1,14 @@
 const config = require('../../config');
 const llmClient = require('../../clients/llm.client');
-const gymModule = require('../../modules/gym/gym.service');
+const financeModule = require('../../modules/finance/finance.service');
 const tipsRepo = require('../../db/repositories/tips.repo');
 const logger = require('../../utils/logger');
 
-async function runGymTipsJob({ requestId = 'background-gym-tips' } = {}) {
-  const validCount = await tipsRepo.countValidTips('gym');
+async function runFinanceTipsJob({ requestId = 'background-finance-tips' } = {}) {
+  const validCount = await tipsRepo.countValidTips('finance');
 
   if (validCount >= config.background.tipsMinEntries && false) {
-    logger.info('Skipping gym tips generation, enough valid entries exist', {
+    logger.info('Skipping finance tips generation, enough valid entries exist', {
       requestId,
       validCount,
     });
@@ -16,20 +16,20 @@ async function runGymTipsJob({ requestId = 'background-gym-tips' } = {}) {
   }
 
   if (!(await llmClient.checkLocalModelAvailable())) {
-    logger.warn('Skipping gym tips generation, local model unavailable', { requestId });
+    logger.warn('Skipping finance tips generation, local model unavailable', { requestId });
     return { skipped: true, reason: 'local_model_unavailable' };
   }
 
-  const analysis = await gymModule.getGymAnalysis();
+  const analysis = await financeModule.getFinanceAnalysis();
   const prompt = [
-    'Create 5 short actionable gym tips for Atlas.',
+    'Create 5 short actionable finance tips for Atlas.',
     'Return JSON only as an array of strings.',
     'Each tip must be practical, specific, and under 20 words.',
     buildTipsContext(analysis),
   ].join('\n\n');
 
   const raw = await llmClient.generate({
-    system: 'You generate concise gym tips from provided context. Output JSON only.',
+    system: 'You generate concise finance tips from provided context. Output JSON only.',
     prompt,
   });
 
@@ -39,36 +39,35 @@ async function runGymTipsJob({ requestId = 'background-gym-tips' } = {}) {
     .slice(0, 5);
 
   if (tips.length === 0) {
-    logger.warn('Gym tips generation produced no valid entries', { requestId });
+    logger.warn('Finance tips generation produced no valid entries', { requestId });
     return { skipped: true, reason: 'invalid_generation' };
   }
 
   const inserted = await tipsRepo.insertManyTips(
     tips.map((content) => ({
-      domain: 'gym',
+      domain: 'finance',
       content,
       validUntil: getValidUntil(config.background.tipsTtlHours),
     })),
   );
 
-  logger.info('Gym tips generated', { requestId, insertedCount: inserted.length });
+  logger.info('Finance tips generated', { requestId, insertedCount: inserted.length });
   return { skipped: false, insertedCount: inserted.length };
 }
 
 function buildTipsContext(analysis) {
-  return [
-    'Gym tip context:',
-    `- Summary: ${analysis?.summary || 'Unavailable'}`,
-    `- Workout frequency: ${analysis?.meta?.workoutCount ?? 0}`,
-    `- Consistency level: ${deriveConsistencyLevel(analysis?.meta?.workoutCount || 0)}`,
-    `- Plateau signal: ${analysis?.data?.progressIndicators?.length ? 'progress exists' : 'possible plateau'}`,
-  ].join('\n');
-}
+  const trend = analysis?.meta?.trend;
 
-function deriveConsistencyLevel(workoutCount) {
-  if (workoutCount >= 6) return 'high';
-  if (workoutCount >= 3) return 'moderate';
-  return 'low';
+  return [
+    'Finance tip context:',
+    `- Summary: ${analysis?.summary || 'Unavailable'}`,
+    `- Total spend: ${analysis?.data?.totalSpent ?? 0}`,
+    `- Spending trend: ${trend ? `${trend.direction} ${trend.changePercent ?? 'N/A'}%` : 'unavailable'}`,
+    `- Top category: ${analysis?.data?.topCategory || 'unknown'}`,
+    analysis?.data?.largestTransaction
+      ? `- Largest transaction: ${analysis.data.largestTransaction.amount} for ${analysis.data.largestTransaction.description}`
+      : '- Largest transaction unavailable',
+  ].join('\n');
 }
 
 function parseJsonArray(raw) {
@@ -85,5 +84,5 @@ function getValidUntil(hours) {
 }
 
 module.exports = {
-  runGymTipsJob,
+  runFinanceTipsJob,
 };

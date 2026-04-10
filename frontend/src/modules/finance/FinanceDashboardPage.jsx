@@ -9,12 +9,19 @@ export function FinanceDashboardPage() {
   const [localError, setLocalError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const {
+    analysisDays,
+    setAnalysisDays,
     analysis,
     isLoadingAnalysis,
     analysisError,
+    transactions,
+    isLoadingTransactions,
+    transactionsError,
+    pendingCategoryTransactionId,
     isUploading,
     uploadError,
     uploadResult,
+    saveTransactionCategory,
     uploadStatement,
   } = useFinanceDashboard();
 
@@ -62,6 +69,14 @@ export function FinanceDashboardPage() {
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleCategoryChange(transactionId, category) {
+    try {
+      await saveTransactionCategory(transactionId, category);
+    } catch (_) {
+      // Hook state already carries the error.
     }
   }
 
@@ -187,6 +202,23 @@ export function FinanceDashboardPage() {
               ) : null}
             </div>
 
+            <div className="mt-4 flex flex-wrap gap-2">
+              {ANALYSIS_PERIODS.map((period) => (
+                <button
+                  key={period.days}
+                  type="button"
+                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                    analysisDays === period.days
+                      ? 'border-atlas-accent bg-atlas-accent text-white'
+                      : 'border-atlas-line/80 bg-atlas-night/40 text-atlas-slate'
+                  }`}
+                  onClick={() => setAnalysisDays(period.days)}
+                >
+                  {period.label}
+                </button>
+              ))}
+            </div>
+
             {analysisError ? (
               <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                 {analysisError}
@@ -251,6 +283,87 @@ export function FinanceDashboardPage() {
               </section>
             </div>
           </section>
+        </section>
+
+        <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-atlas-slate">
+                Transaction History
+              </p>
+              <h2 className="mt-2 text-xl font-semibold text-atlas-ink">
+                Persisted imports
+              </h2>
+            </div>
+            {isLoadingTransactions ? (
+              <span className="text-xs font-medium uppercase tracking-[0.18em] text-atlas-slate">
+                Loading
+              </span>
+            ) : (
+              <span className="rounded-full border border-atlas-line/80 px-3 py-1 text-[11px] text-atlas-slate">
+                {transactions.length} shown
+              </span>
+            )}
+          </div>
+
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-atlas-slate">
+            Imported transactions stay here after refresh, even if they are older than the current analysis window.
+          </p>
+
+          {transactionsError ? (
+            <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              {transactionsError}
+            </div>
+          ) : null}
+
+          {transactions.length ? (
+            <div className="mt-4 overflow-hidden rounded-[20px] border border-atlas-line/70 bg-atlas-night/40">
+              <div className="hidden grid-cols-[120px_minmax(0,1fr)_180px_140px] gap-3 border-b border-atlas-line/60 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-atlas-slate md:grid">
+                <span>Date</span>
+                <span>Description</span>
+                <span>Category</span>
+                <span className="text-right">Amount</span>
+              </div>
+
+              <div className="divide-y divide-atlas-line/60">
+                {transactions.map((transaction) => (
+                  <article
+                    key={transaction.id}
+                    className="grid gap-2 px-4 py-4 md:grid-cols-[120px_minmax(0,1fr)_180px_140px] md:items-center md:gap-3"
+                  >
+                    <p className="text-xs uppercase tracking-[0.18em] text-atlas-slate">
+                      {transaction.date}
+                    </p>
+                    <p className="text-sm font-medium text-atlas-ink">
+                      {transaction.description}
+                    </p>
+                    <label className="block">
+                      <span className="sr-only">Category</span>
+                      <select
+                        value={normalizeCategoryValue(transaction.category)}
+                        disabled={pendingCategoryTransactionId === String(transaction.id)}
+                        className="w-full rounded-[14px] border border-atlas-line/80 bg-atlas-panel px-3 py-2 text-sm text-atlas-ink outline-none transition focus:border-atlas-accent disabled:cursor-not-allowed disabled:opacity-60"
+                        onChange={(event) => handleCategoryChange(transaction.id, event.target.value)}
+                      >
+                        {CATEGORY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="text-sm font-semibold text-atlas-ink md:text-right">
+                      {formatCurrency(transaction.amount)}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm leading-6 text-atlas-slate">
+              Imported transactions will appear here once a Google Pay statement has been processed.
+            </p>
+          )}
         </section>
 
         <section className="rounded-[22px] border border-atlas-line/80 bg-atlas-panel px-4 py-4 shadow-panel">
@@ -363,6 +476,31 @@ function MetricCard({ label, value }) {
   );
 }
 
+const ANALYSIS_PERIODS = [
+  { label: '30D', days: 30 },
+  { label: '60D', days: 60 },
+  { label: '90D', days: 90 },
+  { label: 'All', days: 'all' },
+];
+
+const CATEGORY_OPTIONS = [
+  { value: 'uncategorized', label: 'Uncategorized' },
+  { value: 'food', label: 'Food' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'shopping', label: 'Shopping' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'income', label: 'Income' },
+  { value: 'health', label: 'Health' },
+  { value: 'fitness', label: 'Fitness' },
+  { value: 'entertainment', label: 'Entertainment' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'bills', label: 'Bills' },
+  { value: 'education', label: 'Education' },
+  { value: 'subscriptions', label: 'Subscriptions' },
+  { value: 'groceries', label: 'Groceries' },
+  { value: 'other', label: 'Other' },
+];
+
 function validatePdfFile(file) {
   const typeLooksValid = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
 
@@ -399,4 +537,8 @@ function formatTrend(trend) {
     : `${Number(trend.changePercent).toFixed(1)}%`;
 
   return `${trend.direction} ${percent}`;
+}
+
+function normalizeCategoryValue(value) {
+  return value ? String(value).toLowerCase() : 'uncategorized';
 }

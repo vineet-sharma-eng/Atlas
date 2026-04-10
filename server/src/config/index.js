@@ -66,6 +66,7 @@ const config = {
   background: {
     financeInsightsSchedule: process.env.FINANCE_INSIGHTS_CRON || '0 9 * * 0',
     gymInsightsSchedule: process.env.GYM_INSIGHTS_CRON || '0 8 */2 * *',
+    financeTipsSchedule: process.env.FINANCE_TIPS_CRON || '0 7 * * 1,4',
     gymTipsSchedule: process.env.GYM_TIPS_CRON || '0 7 */2 * *',
     motivationSchedule: process.env.MOTIVATION_CRON || '0 7 * * *',
     financeInsightsTtlHours: parseInteger(process.env.FINANCE_INSIGHTS_TTL_HOURS, 168),

@@ -7,6 +7,7 @@ const tipsRepo = require('../db/repositories/tips.repo');
 const motivationRepo = require('../db/repositories/motivation.repo');
 const { runFinanceInsightsJob } = require('../services/insights/financeInsights.service');
 const { runGymInsightsJob } = require('../services/insights/gymInsights.service');
+const { runFinanceTipsJob } = require('../services/tips/financeTips.service');
 const { runGymTipsJob } = require('../services/tips/tips.service');
 const { runMotivationJob } = require('../services/motivation/motivation.service');
 
@@ -27,10 +28,11 @@ async function startBackgroundJobs() {
   started = true;
   registerJob('finance-insights', config.background.financeInsightsSchedule, runFinanceInsightsJob);
   registerJob('gym-insights', config.background.gymInsightsSchedule, runGymInsightsJob);
+  registerJob('finance-tips', config.background.financeTipsSchedule, runFinanceTipsJob);
   registerJob('gym-tips', config.background.gymTipsSchedule, runGymTipsJob);
   registerJob('motivation', config.background.motivationSchedule, runMotivationJob);
 
-  await runAllJobsOnce();
+  // await runAllJobsOnce();
 }
 
 function registerJob(name, schedule, jobFn) {
@@ -52,6 +54,7 @@ async function runAllJobsOnce() {
   const jobs = [
     ['finance-insights', runFinanceInsightsJob],
     ['gym-insights', runGymInsightsJob],
+    ['finance-tips', runFinanceTipsJob],
     ['gym-tips', runGymTipsJob],
     ['motivation', runMotivationJob],
   ];

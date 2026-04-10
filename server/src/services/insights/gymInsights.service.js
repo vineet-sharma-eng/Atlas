@@ -7,7 +7,7 @@ const logger = require('../../utils/logger');
 async function runGymInsightsJob({ requestId = 'background-gym-insights' } = {}) {
   const validCount = await insightsRepo.countValidInsights('gym');
 
-  if (validCount >= config.background.gymInsightsMinEntries) {
+  if (validCount >= config.background.gymInsightsMinEntries && false) {
     logger.info('Skipping gym insights generation, enough valid entries exist', {
       requestId,
       validCount,

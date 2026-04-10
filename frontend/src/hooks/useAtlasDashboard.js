@@ -6,6 +6,23 @@ const EMPTY_DASHBOARD = {
   insights: [],
   tips: [],
   motivation: null,
+  motivations: [],
+  modules: {
+    finance: {
+      topInsight: null,
+      insights: [],
+      tips: [],
+      motivation: null,
+      motivations: [],
+    },
+    gym: {
+      topInsight: null,
+      insights: [],
+      tips: [],
+      motivation: null,
+      motivations: [],
+    },
+  },
 };
 
 export function useAtlasDashboard() {
@@ -29,6 +46,11 @@ export function useAtlasDashboard() {
             insights: Array.isArray(payload?.insights) ? payload.insights : [],
             tips: Array.isArray(payload?.tips) ? payload.tips : [],
             motivation: payload?.motivation || null,
+            motivations: Array.isArray(payload?.motivations) ? payload.motivations : [],
+            modules: {
+              finance: normalizeModule(payload?.modules?.finance),
+              gym: normalizeModule(payload?.modules?.gym),
+            },
           });
         }
       } catch (loadError) {
@@ -54,5 +76,15 @@ export function useAtlasDashboard() {
     ...data,
     isLoading,
     error,
+  };
+}
+
+function normalizeModule(modulePayload) {
+  return {
+    topInsight: modulePayload?.topInsight || null,
+    insights: Array.isArray(modulePayload?.insights) ? modulePayload.insights : [],
+    tips: Array.isArray(modulePayload?.tips) ? modulePayload.tips : [],
+    motivation: modulePayload?.motivation || null,
+    motivations: Array.isArray(modulePayload?.motivations) ? modulePayload.motivations : [],
   };
 }

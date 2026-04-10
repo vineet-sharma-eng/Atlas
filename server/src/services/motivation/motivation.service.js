@@ -7,7 +7,7 @@ const fallback = require('./fallback');
 async function runMotivationJob({ requestId = 'background-motivation' } = {}) {
   const validCount = await motivationRepo.countValidMotivation();
 
-  if (validCount >= config.background.motivationMinEntries) {
+  if (validCount >= config.background.motivationMinEntries && false) {
     logger.info('Skipping motivation generation, enough valid entries exist', {
       requestId,
       validCount,

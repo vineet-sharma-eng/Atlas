@@ -172,7 +172,7 @@ function mapMotivationRow(row) {
 
 function normalizeDomain(value) {
   const normalized = String(value || 'general').trim().toLowerCase();
-  return ['general', 'gym'].includes(normalized) ? normalized : 'general';
+  return ['general', 'gym', 'finance'].includes(normalized) ? normalized : 'general';
 }
 
 function normalizeSource(value) {
