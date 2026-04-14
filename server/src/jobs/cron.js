@@ -32,7 +32,7 @@ async function startBackgroundJobs() {
   registerJob('gym-tips', config.background.gymTipsSchedule, runGymTipsJob);
   registerJob('motivation', config.background.motivationSchedule, runMotivationJob);
 
-  // await runAllJobsOnce();
+  await runAllJobsOnce();
 }
 
 function registerJob(name, schedule, jobFn) {
