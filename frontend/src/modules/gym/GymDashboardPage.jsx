@@ -1,41 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useGymDashboard } from '../../hooks/useGymDashboard';
 import { SessionDetail } from './components/dashboard/SessionDetail';
 import { SessionList } from './components/dashboard/SessionList';
 import { TemplateEditor } from './components/dashboard/TemplateEditor';
 import { TemplateList } from './components/dashboard/TemplateList';
 
-const DASHBOARD_PANELS = [
-  { id: 'templates', label: 'Templates' },
-  { id: 'history', label: 'History' },
-];
-
-export function GymDashboardPage() {
+export function GymDashboardPage({ panel = 'history', sessionId = '' }) {
   const dashboard = useGymDashboard();
-  const routeState = useDashboardHashState();
-  const [activePanel, setActivePanel] = useState(routeState.panel);
 
   useEffect(() => {
-    setActivePanel(routeState.panel);
-  }, [routeState.panel]);
-
-  useEffect(() => {
-    if (activePanel !== 'history') {
+    if (panel !== 'history') {
       return;
     }
 
-    dashboard.setSelectedSessionId(routeState.sessionId || '');
-  }, [activePanel, routeState.sessionId]);
+    dashboard.setSelectedSessionId(sessionId);
+  }, [dashboard, panel, sessionId]);
 
-  const isHistoryDrawerOpen = activePanel === 'history' && Boolean(dashboard.selectedSessionId);
+  const isHistoryDrawerOpen = panel === 'history' && Boolean(dashboard.selectedSessionId);
   const dashboardTitle = useMemo(
-    () => (activePanel === 'templates' ? 'Template editor' : 'History'),
-    [activePanel],
+    () => (panel === 'templates' ? 'Template editor' : 'History'),
+    [panel],
   );
-
-  function handleSelectPanel(panelId) {
-    setHashState({ panel: panelId, sessionId: '' });
-  }
 
   function handleSelectSession(sessionId) {
     setHashState({ panel: 'history', sessionId });
@@ -66,24 +51,7 @@ export function GymDashboardPage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-2 rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-1">
-          {DASHBOARD_PANELS.map((panel) => (
-            <button
-              key={panel.id}
-              type="button"
-              className={`rounded-[16px] px-4 py-3 text-sm font-medium ${
-                activePanel === panel.id
-                  ? 'bg-atlas-accent text-white'
-                  : 'text-atlas-slate'
-              }`}
-              onClick={() => handleSelectPanel(panel.id)}
-            >
-              {panel.label}
-            </button>
-          ))}
-        </div>
-
-        {activePanel === 'templates' ? (
+        {panel === 'templates' ? (
           <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
             <TemplateList
               templates={dashboard.templates}
@@ -139,47 +107,10 @@ export function GymDashboardPage() {
   );
 }
 
-function useDashboardHashState() {
-  const [routeState, setRouteState] = useState(() => parseGymHash(window.location.hash));
-
-  useEffect(() => {
-    function handleHashChange() {
-      setRouteState(parseGymHash(window.location.hash));
-    }
-
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
-  return routeState;
-}
-
 function setHashState({ panel, sessionId }) {
   const nextHash = sessionId
     ? `#gym/${panel}/${sessionId}`
     : `#gym/${panel}`;
 
   window.location.hash = nextHash;
-}
-
-function parseGymHash(hash) {
-  const normalizedHash = String(hash || '');
-
-  if (normalizedHash.startsWith('#dashboard')) {
-    const legacyParts = normalizedHash.replace(/^#dashboard\/?/, '').split('/').filter(Boolean);
-    const legacyPanel = legacyParts[0] === 'history' ? 'history' : 'templates';
-    const legacySessionId = legacyPanel === 'history' ? (legacyParts[1] || '') : '';
-
-    return { panel: legacyPanel, sessionId: legacySessionId };
-  }
-
-  if (!normalizedHash.startsWith('#gym')) {
-    return { panel: 'templates', sessionId: '' };
-  }
-
-  const parts = normalizedHash.replace(/^#gym\/?/, '').split('/').filter(Boolean);
-  const panel = parts[0] === 'history' ? 'history' : 'templates';
-  const sessionId = panel === 'history' ? (parts[1] || '') : '';
-
-  return { panel, sessionId };
 }

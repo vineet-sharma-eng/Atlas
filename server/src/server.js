@@ -2,24 +2,33 @@ const createApp = require('./app');
 const config = require('./config');
 const logger = require('./utils/logger');
 const { startBackgroundJobs } = require('./jobs/cron');
+const runScripts = require('../scripts');
 
-function startServer() {
+async function startServer() {
+  await runScripts();
+
   const app = createApp();
-  const server = app.listen(config.port, () => {
+  const server = app.listen(config.port, async () => {
     logger.info('Atlas Orchestrator started', {
       port: config.port,
       env: config.env,
       model: config.openAiModelId,
       ollamaModel: config.ollama.model,
     });
-    startBackgroundJobs();
+
+    await startBackgroundJobs();
   });
 
   return server;
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch((error) => {
+    logger.error('Atlas Orchestrator failed to start', {
+      error: error.message,
+    });
+    process.exit(1);
+  });
 }
 
 module.exports = {

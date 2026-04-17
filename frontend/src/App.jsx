@@ -107,16 +107,17 @@ export default function App() {
 
 function GymModulePage({ routeState }) {
   const gymPanel = routeState.panel === 'history' || routeState.panel === 'templates'
-    ? 'dashboard'
+    ? routeState.panel
     : 'workout';
 
   return (
     <div>
       <div className="mx-auto max-w-5xl px-3 pt-3 sm:px-4">
-        <div className="grid grid-cols-2 gap-2 rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-1">
+        <div className="grid grid-cols-3 gap-2 rounded-[22px] border border-atlas-line/80 bg-atlas-panel p-1">
           {[
             { id: 'workout', label: 'Workout', hash: '#gym/workout' },
-            { id: 'dashboard', label: 'History', hash: '#gym/templates' },
+            { id: 'history', label: 'History', hash: '#gym/history' },
+            { id: 'templates', label: 'Templates', hash: '#gym/templates' },
           ].map((item) => (
             <button
               key={item.id}
@@ -136,7 +137,7 @@ function GymModulePage({ routeState }) {
         </div>
       </div>
 
-      {gymPanel === 'dashboard' ? <GymDashboardPage /> : <GymTrackingPage />}
+      {gymPanel === 'workout' ? <GymTrackingPage /> : <GymDashboardPage panel={gymPanel} sessionId={routeState.sessionId || ''} />}
     </div>
   );
 }
