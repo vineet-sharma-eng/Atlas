@@ -16,17 +16,19 @@ async function runMotivationJob({ requestId = 'background-motivation' } = {}) {
   }
 
   let quotes = [];
-  let source = 'cloud';
+  let source = 'local';
 
-  if (await provider.checkCloudAvailable()) {
+  if (await provider.checkLocalAvailable()) {
     try {
       quotes = await provider.generateMotivationBatch(config.background.motivationBatchSize);
     } catch (error) {
-      logger.warn('Cloud motivation generation failed, using fallback path', {
+      logger.warn('Local motivation generation failed, using fallback path', {
         requestId,
         error: error.message,
       });
     }
+  } else {
+    logger.warn('Skipping local motivation generation, local model unavailable', { requestId });
   }
 
   if (quotes.length === 0) {
