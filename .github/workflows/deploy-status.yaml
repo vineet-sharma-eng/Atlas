@@ -1,0 +1,16 @@
+name: Update Deployment Status
+on:
+  push:
+    branches:
+      - prod/v2.0 # Change to your deployment branch
+
+jobs:
+  update-github-env:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Deployment
+        uses: chrnorm/deployment-action@v2
+        with:
+          token: "${{ github.token }}"
+          environment: production # Must match the name you created in Step 2
+          initial-status: success
