@@ -58,17 +58,29 @@ export function GymTrackingPage() {
           isWorkoutComplete={workoutSession.isWorkoutComplete}
           exerciseCatalog={workoutSession.exerciseCatalog}
           isLoadingExerciseCatalog={workoutSession.isLoadingExerciseCatalog}
+          exerciseNotesById={workoutSession.exerciseNotesById}
+          loadingExerciseNotesById={workoutSession.loadingExerciseNotesById}
+          exerciseNotesErrorById={workoutSession.exerciseNotesErrorById}
           onOpenExercise={workoutSession.setOpenExerciseId}
           onAddExercise={workoutSession.addExercise}
           onRemoveExercise={workoutSession.removeExercise}
           onUpdateExerciseStatus={workoutSession.updateExerciseStatus}
           onSaveSet={workoutSession.saveSet}
+          onUpdateSessionTargets={workoutSession.updateSessionTargets}
+          onSaveTargetsToTemplate={workoutSession.saveTargetsToTemplate}
+          onSaveExerciseDefaults={workoutSession.saveExerciseDefaults}
           onEndSession={workoutSession.endSession}
           onAddExerciseToTemplate={workoutSession.addSessionExerciseToTemplate}
           onLoadExerciseHistory={workoutSession.loadExerciseHistory}
+          onLoadExerciseNotes={workoutSession.loadExerciseNotes}
+          onCreateExerciseNote={workoutSession.createExerciseNote}
+          onUpdateExerciseNote={workoutSession.updateExerciseNote}
+          onDeleteExerciseNote={workoutSession.deleteExerciseNote}
           onLoadAlternates={workoutSession.loadAlternates}
           onSearchExerciseCatalog={workoutSession.searchExerciseCatalog}
           onCreateAlternate={workoutSession.createAlternate}
+          onUpdateAlternate={workoutSession.updateAlternate}
+          onDeleteAlternate={workoutSession.deleteAlternate}
           onSwapExercise={workoutSession.swapExercise}
         />
       </div>

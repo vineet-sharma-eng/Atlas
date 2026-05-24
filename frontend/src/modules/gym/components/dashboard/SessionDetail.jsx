@@ -27,7 +27,7 @@ export function SessionDetail({
   const mobileSelectedExercise = sessionDetail?.exercises.find(
     (exercise) => exercise.session_exercise_id === mobileSelectedExerciseId,
   ) || null;
-  const mobileInsightKey = getExerciseInsightKey(mobileSelectedExercise, sessionDetail?.template_id);
+  const mobileInsightKey = getExerciseInsightKey(mobileSelectedExercise);
 
   useEffect(() => {
     if (!sessionDetail || !isDesktop) {
@@ -113,7 +113,7 @@ export function SessionDetail({
         <div className="space-y-3">
           {sessionDetail.exercises.map((exercise) => {
             const isExpanded = isDesktop || expandedExerciseIds[exercise.session_exercise_id] === true;
-            const insightKey = getExerciseInsightKey(exercise, sessionDetail.template_id);
+            const insightKey = getExerciseInsightKey(exercise);
 
             return (
               <article
@@ -378,13 +378,12 @@ function groupHistoryByDate(rows) {
   }));
 }
 
-function getExerciseInsightKey(exercise, templateId) {
+function getExerciseInsightKey(exercise) {
   const exerciseId = Number(exercise?.effective_exercise_id || 0);
 
   if (!exerciseId) {
     return '';
   }
 
-  const templateScopeId = exercise?.template_exercise_id && templateId ? Number(templateId) : null;
-  return `${exerciseId}:${templateScopeId || 'all'}`;
+  return `${exerciseId}:all`;
 }

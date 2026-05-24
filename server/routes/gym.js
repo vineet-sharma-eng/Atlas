@@ -5,8 +5,11 @@ const {
   addTemplateExercise,
   addSet,
   createTemplateExerciseAlternateHandler,
+  createExerciseNoteHandler,
+  deleteExerciseNoteHandler,
   deleteSessionExerciseHandler,
   deleteSessionHandler,
+  deleteTemplateExerciseAlternateHandler,
   duplicateTemplateHandler,
   endSession,
   getAnalysis,
@@ -16,6 +19,7 @@ const {
   getExerciseCatalogHandler,
   getHistory,
   getTemplateExerciseAlternatesHandler,
+  listExerciseNotesHandler,
   listRecentExercisesHandler,
   getSessionDetail,
   initSession,
@@ -28,7 +32,11 @@ const {
   startSession,
   toggleTemplateExerciseVisibility,
   updateTemplateSetHandler,
+  updateTemplateExerciseAlternateHandler,
+  updateExerciseDefaultsHandler,
+  updateExerciseNoteHandler,
   updateSessionExerciseOverrideHandler,
+  updateSessionExerciseTargetsHandler,
   updateExerciseStatus,
 } = require('../modules/gym/gym.controller');
 
@@ -45,6 +53,7 @@ router.get('/session/init/:template_id', initSession);
 router.get('/session/:id', getSessionDetail);
 router.get('/exercises/:id/history', getExerciseHistoryHandler);
 router.get('/exercises/:id/progress', getExerciseProgressHandler);
+router.get('/exercises/:id/notes', listExerciseNotesHandler);
 router.get('/template/exercise/:id/alternates', getTemplateExerciseAlternatesHandler);
 router.post('/session/start', startSession);
 router.post('/session/end', endSession);
@@ -54,7 +63,12 @@ router.delete('/session/:id', deleteSessionHandler);
 router.delete('/session-exercise/:id', deleteSessionExerciseHandler);
 router.patch('/exercise/:id/status', updateExerciseStatus);
 router.patch('/exercises/:id', renameExerciseHandler);
+router.patch('/exercises/:id/defaults', updateExerciseDefaultsHandler);
+router.post('/exercises/:id/notes', createExerciseNoteHandler);
+router.patch('/exercises/:id/notes/:note_id', updateExerciseNoteHandler);
+router.delete('/exercises/:id/notes/:note_id', deleteExerciseNoteHandler);
 router.patch('/session-exercise/:id', updateSessionExerciseOverrideHandler);
+router.patch('/session-exercise/:id/targets', updateSessionExerciseTargetsHandler);
 router.post('/set', addSet);
 router.patch('/template/:id', renameTemplate);
 router.patch('/template/:id/reorder', reorderTemplate);
@@ -62,6 +76,8 @@ router.patch('/template/exercise/:id/toggle', toggleTemplateExerciseVisibility);
 router.patch('/template/set/:id', updateTemplateSetHandler);
 router.post('/template/exercise/add', addTemplateExercise);
 router.post('/template/exercise/:id/alternates', createTemplateExerciseAlternateHandler);
+router.patch('/template/exercise/alternates/:id', updateTemplateExerciseAlternateHandler);
+router.delete('/template/exercise/alternates/:id', deleteTemplateExerciseAlternateHandler);
 router.post('/template/:id/duplicate', duplicateTemplateHandler);
 
 module.exports = router;

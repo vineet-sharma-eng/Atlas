@@ -52,6 +52,10 @@ async function createOrResumeSession({ templateId, date = null, timeZone = 'UTC'
         exercise_name,
         muscle_group,
         order_index,
+        target_sets,
+        rep_min,
+        rep_max,
+        target_rir,
         status,
         updated_at
       )
@@ -62,9 +66,15 @@ async function createOrResumeSession({ templateId, date = null, timeZone = 'UTC'
         te.exercise_name,
         te.muscle_group,
         te.order_index,
+        COALESCE(ts.target_sets, ex.default_target_sets, 1),
+        COALESCE(ts.rep_min, ex.default_rep_min),
+        COALESCE(ts.rep_max, ex.default_rep_max),
+        COALESCE(ts.target_rir, ex.default_target_rir),
         'pending',
         NOW()
       FROM template_exercises te
+      LEFT JOIN template_sets ts ON ts.template_exercise_id = te.id
+      LEFT JOIN exercises ex ON ex.id = te.exercise_id
       WHERE te.template_id = $2
         AND COALESCE(te.is_active, TRUE) = TRUE
       ORDER BY te.order_index ASC, te.id ASC
@@ -100,6 +110,14 @@ async function getSessionState(session, { timeZone = 'UTC' } = {}) {
   const previousSessionExercises = previousSession
     ? await getSessionExercises(previousSession.id)
     : [];
+  const latestSetsByExerciseId = await getLatestPreviousSetsByExerciseIds(
+    getEffectiveExerciseIds(sessionExercises),
+    { beforeDate: today },
+  );
+  const sameDayUsageByKey = await getSameDayUsageForExercises(sessionExercises, {
+    date: today,
+    currentSessionId: session.id,
+  });
 
   return {
     today,
@@ -110,6 +128,8 @@ async function getSessionState(session, { timeZone = 'UTC' } = {}) {
       templateExercises,
       currentSessionExercises: sessionExercises,
       previousSessionExercises,
+      latestSetsByExerciseId,
+      sameDayUsageByKey,
     }),
   };
 }
@@ -148,6 +168,14 @@ async function getSessionInit({ templateId, date = null, timeZone = 'UTC' }) {
   const previousSessionExercises = previousSession
     ? await getSessionExercises(previousSession.id)
     : [];
+  const latestSetsByExerciseId = await getLatestPreviousSetsByExerciseIds(
+    getEffectiveExerciseIds(templateExercises),
+    { beforeDate: today },
+  );
+  const sameDayUsageByKey = await getSameDayUsageForExercises(templateExercises, {
+    date: today,
+    currentSessionId: null,
+  });
 
   return {
     today,
@@ -158,6 +186,8 @@ async function getSessionInit({ templateId, date = null, timeZone = 'UTC' }) {
       templateExercises,
       currentSessionExercises: [],
       previousSessionExercises,
+      latestSetsByExerciseId,
+      sameDayUsageByKey,
     }),
   };
 }
@@ -166,36 +196,51 @@ function buildSessionInitExercises({
   templateExercises,
   currentSessionExercises,
   previousSessionExercises,
+  latestSetsByExerciseId = new Map(),
+  sameDayUsageByKey = new Map(),
 }) {
   if (currentSessionExercises.length > 0) {
     return currentSessionExercises.map((sessionExercise) => {
       const templateExercise = templateExercises.find(
         (candidate) => candidate.template_exercise_id === sessionExercise.template_exercise_id,
       ) || null;
-      const previousExercise = findMatchingPreviousExercise(previousSessionExercises, sessionExercise);
+      const previousExercise = findMatchingPreviousExercise(
+        previousSessionExercises,
+        sessionExercise,
+        latestSetsByExerciseId,
+      );
 
       return buildExercisePayload({
         templateExercise,
         sessionExercise,
         previousExercise,
+        sameDayUsage: findSameDayUsage(sameDayUsageByKey, sessionExercise),
       });
     });
   }
 
   return templateExercises.map((templateExercise) => {
-    const previousExercise = findMatchingPreviousExercise(previousSessionExercises, templateExercise);
+    const previousExercise = findMatchingPreviousExercise(
+      previousSessionExercises,
+      templateExercise,
+      latestSetsByExerciseId,
+    );
 
     return buildExercisePayload({
       templateExercise,
       sessionExercise: null,
       previousExercise,
+      sameDayUsage: findSameDayUsage(sameDayUsageByKey, templateExercise),
     });
   });
 }
 
-function buildExercisePayload({ templateExercise, sessionExercise, previousExercise }) {
+function buildExercisePayload({ templateExercise, sessionExercise, previousExercise, sameDayUsage = null }) {
   const sourceExercise = sessionExercise || templateExercise;
-  const targetSets = templateExercise?.target_sets || previousExercise?.sets.length || 1;
+  const targetSets = sessionExercise?.target_sets
+    || templateExercise?.target_sets
+    || previousExercise?.sets.length
+    || 1;
   const effectiveExerciseId = sessionExercise?.effective_exercise_id ?? templateExercise?.exercise_id ?? null;
   const effectiveExerciseName = sessionExercise?.effective_exercise_name
     || templateExercise?.exercise_name
@@ -219,9 +264,12 @@ function buildExercisePayload({ templateExercise, sessionExercise, previousExerc
     muscle_group: sourceExercise?.muscle_group || '',
     order_index: sourceExercise?.order_index || 1,
     target_sets: targetSets,
-    rep_min: templateExercise?.rep_min ?? null,
-    rep_max: templateExercise?.rep_max ?? null,
+    rep_min: sessionExercise?.rep_min ?? templateExercise?.rep_min ?? null,
+    rep_max: sessionExercise?.rep_max ?? templateExercise?.rep_max ?? null,
+    target_rir: sessionExercise?.target_rir ?? templateExercise?.target_rir ?? null,
     notes: templateExercise?.notes || '',
+    pinned_note: sourceExercise?.pinned_note || null,
+    same_day_usage: sameDayUsage,
     status: sessionExercise?.status || 'pending',
     source: templateExercise ? 'template' : 'session',
     can_add_to_template: !templateExercise,
@@ -246,7 +294,15 @@ function buildPrefillSets(targetSets, previousSets) {
   });
 }
 
-function findMatchingPreviousExercise(previousSessionExercises, exerciseLike) {
+function findMatchingPreviousExercise(previousSessionExercises, exerciseLike, latestSetsByExerciseId = new Map()) {
+  const effectiveExerciseId = Number(exerciseLike.effective_exercise_id || exerciseLike.exercise_id || 0);
+
+  if (effectiveExerciseId > 0 && latestSetsByExerciseId.has(effectiveExerciseId)) {
+    return {
+      sets: latestSetsByExerciseId.get(effectiveExerciseId),
+    };
+  }
+
   if (!Array.isArray(previousSessionExercises) || previousSessionExercises.length === 0) {
     return null;
   }
@@ -278,11 +334,229 @@ function findMatchingPreviousExercise(previousSessionExercises, exerciseLike) {
   ) || null;
 }
 
-async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
+function getEffectiveExerciseIds(exercises) {
+  return Array.from(
+    new Set(
+      exercises
+        .map((exercise) => Number(exercise.effective_exercise_id || exercise.exercise_id || 0))
+        .filter((exerciseId) => exerciseId > 0),
+    ),
+  );
+}
+
+async function getLatestPreviousSetsByExerciseIds(exerciseIds, { beforeDate }) {
+  const ids = Array.from(new Set(exerciseIds.map(Number).filter((exerciseId) => exerciseId > 0)));
+
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const result = await pool.query(
+    `
+      WITH set_rows AS (
+        SELECT
+          gst.logged_exercise_id,
+          gs.id AS session_id,
+          gs.date,
+          gst.id,
+          gst.exercise_id,
+          gst.set_number,
+          gst.weight,
+          gst.reps,
+          gst.rir,
+          gst.updated_at,
+          DENSE_RANK() OVER (
+            PARTITION BY gst.logged_exercise_id
+            ORDER BY gs.date DESC, gs.id DESC
+          ) AS session_rank
+        FROM gym_sets gst
+        JOIN gym_exercises ge ON ge.id = gst.exercise_id
+        JOIN gym_sessions gs ON gs.id = ge.session_id
+        WHERE gst.logged_exercise_id = ANY($1::int[])
+          AND gs.date < $2
+      )
+      SELECT
+        logged_exercise_id,
+        id,
+        exercise_id,
+        set_number,
+        weight,
+        reps,
+        rir,
+        updated_at
+      FROM set_rows
+      WHERE session_rank = 1
+      ORDER BY logged_exercise_id ASC, set_number ASC
+    `,
+    [ids, beforeDate],
+  );
+
+  const setsByExerciseId = new Map();
+
+  for (const row of result.rows) {
+    const key = Number(row.logged_exercise_id);
+    const currentSets = setsByExerciseId.get(key) || [];
+    currentSets.push({
+      id: Number(row.id),
+      exercise_id: Number(row.exercise_id),
+      logged_exercise_id: key,
+      set_number: Number(row.set_number),
+      weight: row.weight === null ? null : Number(row.weight),
+      reps: row.reps === null ? null : Number(row.reps),
+      rir: row.rir === null ? null : Number(row.rir),
+      updated_at: row.updated_at,
+    });
+    setsByExerciseId.set(key, currentSets);
+  }
+
+  return setsByExerciseId;
+}
+
+async function getSameDayUsageForExercises(exercises, { date, currentSessionId = null }) {
+  const templateExerciseIds = Array.from(
+    new Set(
+      exercises
+        .map((exercise) => Number(exercise.template_exercise_id || 0))
+        .filter((templateExerciseId) => templateExerciseId > 0),
+    ),
+  );
+  const exerciseIds = getEffectiveExerciseIds(exercises);
+
+  if (templateExerciseIds.length === 0 && exerciseIds.length === 0) {
+    return new Map();
+  }
+
+  const result = await pool.query(
+    `
+      WITH usage_rows AS (
+        SELECT
+          gs.id AS session_id,
+          gs.date,
+          ge.template_exercise_id,
+          COALESCE(gst.logged_exercise_id, override_alt.exercise_id, ge.exercise_id) AS used_exercise_id,
+          COALESCE(logged_ex.name, override_ex.name, base_ex.name, ge.exercise_name) AS used_exercise_name,
+          ge.override_alternate_id IS NOT NULL AS used_alternate,
+          COUNT(gst.id)::int AS set_count,
+          ROW_NUMBER() OVER (
+            PARTITION BY ge.template_exercise_id, COALESCE(gst.logged_exercise_id, override_alt.exercise_id, ge.exercise_id)
+            ORDER BY MAX(gs.updated_at) DESC, gs.id DESC
+          ) AS row_number
+        FROM gym_exercises ge
+        JOIN gym_sessions gs ON gs.id = ge.session_id
+        LEFT JOIN template_exercise_alternates override_alt ON override_alt.id = ge.override_alternate_id
+        LEFT JOIN exercises base_ex ON base_ex.id = ge.exercise_id
+        LEFT JOIN exercises override_ex ON override_ex.id = override_alt.exercise_id
+        LEFT JOIN gym_sets gst ON gst.exercise_id = ge.id
+        LEFT JOIN exercises logged_ex ON logged_ex.id = gst.logged_exercise_id
+        WHERE gs.date = $1
+          AND ($2::int IS NULL OR gs.id <> $2)
+          AND (
+            ge.template_exercise_id = ANY($3::int[])
+            OR COALESCE(gst.logged_exercise_id, override_alt.exercise_id, ge.exercise_id) = ANY($4::int[])
+          )
+        GROUP BY
+          gs.id,
+          gs.date,
+          ge.template_exercise_id,
+          COALESCE(gst.logged_exercise_id, override_alt.exercise_id, ge.exercise_id),
+          COALESCE(logged_ex.name, override_ex.name, base_ex.name, ge.exercise_name),
+          ge.override_alternate_id IS NOT NULL
+      )
+      SELECT *
+      FROM usage_rows
+      WHERE row_number = 1
+      ORDER BY date DESC, session_id DESC
+    `,
+    [date, currentSessionId, templateExerciseIds, exerciseIds],
+  );
+
+  const usageByKey = new Map();
+
+  for (const row of result.rows) {
+    const usage = {
+      session_id: Number(row.session_id),
+      date: row.date,
+      template_exercise_id: row.template_exercise_id === null ? null : Number(row.template_exercise_id),
+      exercise_id: row.used_exercise_id === null ? null : Number(row.used_exercise_id),
+      exercise_name: row.used_exercise_name,
+      used_alternate: row.used_alternate === true,
+      set_count: Number(row.set_count || 0),
+    };
+
+    if (usage.template_exercise_id) {
+      usageByKey.set(`template:${usage.template_exercise_id}`, usage);
+    }
+
+    if (usage.exercise_id && !usageByKey.has(`exercise:${usage.exercise_id}`)) {
+      usageByKey.set(`exercise:${usage.exercise_id}`, usage);
+    }
+  }
+
+  return usageByKey;
+}
+
+function findSameDayUsage(sameDayUsageByKey, exerciseLike) {
+  const templateExerciseId = Number(exerciseLike.template_exercise_id || 0);
+  const exerciseId = Number(exerciseLike.effective_exercise_id || exerciseLike.exercise_id || 0);
+
+  if (templateExerciseId > 0 && sameDayUsageByKey.has(`template:${templateExerciseId}`)) {
+    return sameDayUsageByKey.get(`template:${templateExerciseId}`);
+  }
+
+  if (exerciseId > 0 && sameDayUsageByKey.has(`exercise:${exerciseId}`)) {
+    return sameDayUsageByKey.get(`exercise:${exerciseId}`);
+  }
+
+  return null;
+}
+
+async function getBaseTargetsForTemplateExercise(templateExerciseId) {
+  const result = await pool.query(
+    `
+      SELECT
+        COALESCE(ts.target_sets, ex.default_target_sets, 1)::int AS target_sets,
+        COALESCE(ts.rep_min, ex.default_rep_min)::int AS rep_min,
+        COALESCE(ts.rep_max, ex.default_rep_max)::int AS rep_max,
+        COALESCE(ts.target_rir, ex.default_target_rir)::int AS target_rir
+      FROM template_exercises te
+      LEFT JOIN template_sets ts ON ts.template_exercise_id = te.id
+      LEFT JOIN exercises ex ON ex.id = te.exercise_id
+      WHERE te.id = $1
+    `,
+    [templateExerciseId],
+  );
+
+  if (result.rowCount === 0) {
+    return {
+      target_sets: 1,
+      rep_min: null,
+      rep_max: null,
+      target_rir: null,
+    };
+  }
+
+  return {
+    target_sets: Number(result.rows[0].target_sets || 1),
+    rep_min: result.rows[0].rep_min === null ? null : Number(result.rows[0].rep_min),
+    rep_max: result.rows[0].rep_max === null ? null : Number(result.rows[0].rep_max),
+    target_rir: result.rows[0].target_rir === null ? null : Number(result.rows[0].target_rir),
+  };
+}
+
+async function createGymExercise({
+  sessionId,
+  exerciseId = null,
+  exerciseName,
+  muscleGroup,
+  targetSets = null,
+  repMin = null,
+  repMax = null,
+  targetRir = null,
+}) {
   await ensureGymSchema();
   const normalizedExerciseName = String(exerciseName || '').trim();
 
-  if (!normalizedExerciseName) {
+  if (!exerciseId && !normalizedExerciseName) {
     const error = new Error('Exercise name is required');
     error.statusCode = 400;
     throw error;
@@ -315,10 +589,54 @@ async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
       throw error;
     }
 
-    const exerciseRecord = await ensureExerciseRecord(client, {
-      name: normalizedExerciseName,
-      muscleGroup: muscleGroup || null,
-    });
+    let exerciseRecord = null;
+
+    if (exerciseId) {
+      const exerciseResult = await client.query(
+        `
+          SELECT
+            id,
+            name,
+            muscle_group,
+            default_target_sets,
+            default_rep_min,
+            default_rep_max,
+            default_target_rir
+          FROM exercises
+          WHERE id = $1
+        `,
+        [exerciseId],
+      );
+
+      if (exerciseResult.rowCount === 0) {
+        const error = new Error('Exercise not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      exerciseRecord = {
+        id: Number(exerciseResult.rows[0].id),
+        name: exerciseResult.rows[0].name,
+        muscle_group: exerciseResult.rows[0].muscle_group,
+        default_target_sets: exerciseResult.rows[0].default_target_sets === null
+          ? null
+          : Number(exerciseResult.rows[0].default_target_sets),
+        default_rep_min: exerciseResult.rows[0].default_rep_min === null
+          ? null
+          : Number(exerciseResult.rows[0].default_rep_min),
+        default_rep_max: exerciseResult.rows[0].default_rep_max === null
+          ? null
+          : Number(exerciseResult.rows[0].default_rep_max),
+        default_target_rir: exerciseResult.rows[0].default_target_rir === null
+          ? null
+          : Number(exerciseResult.rows[0].default_target_rir),
+      };
+    } else {
+      exerciseRecord = await ensureExerciseRecord(client, {
+        name: normalizedExerciseName,
+        muscleGroup: muscleGroup || null,
+      });
+    }
 
     const existingExerciseResult = await client.query(
       `
@@ -333,6 +651,28 @@ async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
     );
 
     if (existingExerciseResult.rowCount > 0) {
+      if (targetSets || repMin !== null || repMax !== null || targetRir !== null) {
+        await client.query(
+          `
+            UPDATE gym_exercises
+            SET
+              target_sets = $2,
+              rep_min = $3,
+              rep_max = $4,
+              target_rir = $5,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [
+            existingExerciseResult.rows[0].id,
+            targetSets || exerciseRecord.default_target_sets || 3,
+            repMin ?? exerciseRecord.default_rep_min ?? 8,
+            repMax ?? exerciseRecord.default_rep_max ?? 12,
+            targetRir ?? exerciseRecord.default_target_rir ?? null,
+          ],
+        );
+      }
+
       await client.query('COMMIT');
       return getSingleSessionExercise(Number(existingExerciseResult.rows[0].id));
     }
@@ -355,10 +695,14 @@ async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
           exercise_name,
           muscle_group,
           order_index,
+          target_sets,
+          rep_min,
+          rep_max,
+          target_rir,
           status,
           updated_at
         )
-        VALUES ($1, NULL, $2, $3, $4, $5, 'pending', NOW())
+        VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
         RETURNING id
       `,
       [
@@ -367,6 +711,10 @@ async function createGymExercise({ sessionId, exerciseName, muscleGroup }) {
         exerciseRecord.name,
         exerciseRecord.muscle_group,
         Number(orderResult.rows[0].next_order || 1),
+        targetSets || exerciseRecord.default_target_sets || 3,
+        repMin ?? exerciseRecord.default_rep_min ?? 8,
+        repMax ?? exerciseRecord.default_rep_max ?? 12,
+        targetRir ?? exerciseRecord.default_target_rir ?? null,
       ],
     );
 
@@ -445,6 +793,48 @@ async function updateGymExerciseStatus(exerciseId, status) {
         updated_at: result.rows[0].updated_at,
       }
     : null;
+}
+
+async function updateSessionExerciseTargets(exerciseId, { targetSets, repMin, repMax, targetRir }) {
+  await ensureGymSchema();
+  await assertExerciseSessionIsActive(exerciseId);
+
+  const loggedSetCountResult = await pool.query(
+    `
+      SELECT COUNT(*)::int AS set_count
+      FROM gym_sets
+      WHERE exercise_id = $1
+    `,
+    [exerciseId],
+  );
+  const loggedSetCount = Number(loggedSetCountResult.rows[0]?.set_count || 0);
+
+  if (targetSets < loggedSetCount) {
+    const error = new Error('target_sets cannot be lower than the number of logged sets');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE gym_exercises
+      SET
+        target_sets = $2,
+        rep_min = $3,
+        rep_max = $4,
+        target_rir = $5,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id
+    `,
+    [exerciseId, targetSets, repMin, repMax, targetRir],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return getSingleSessionExercise(exerciseId);
 }
 
 async function listGymSessions() {
@@ -546,25 +936,16 @@ async function getExerciseHistory(
   {
     beforeDate = null,
     limit = 3,
-    templateId = null,
     timeZone = 'UTC',
   } = {},
 ) {
   await ensureGymSchema();
   const today = beforeDate || await getServerToday({ timeZone });
   const params = [exerciseId, today];
-  const templateScopeClause = templateId
-    ? (() => {
-        params.push(templateId);
-        return `AND gs.template_id = $${params.length}`;
-      })()
-    : '';
   params.push(limit);
 
   // Filter in SQL using the request-localized day boundary so same-day sets
   // never come back as "history" while the user is still on that local date.
-  // When a template id is present, keep history inside that workout template
-  // so identical exercises in other templates do not leak into this thread.
   const result = await pool.query(
     `
       WITH session_rows AS (
@@ -584,7 +965,6 @@ async function getExerciseHistory(
         LEFT JOIN exercises logged_ex ON logged_ex.id = gst.logged_exercise_id
         WHERE gst.logged_exercise_id = $1
           AND gs.date < $2
-          ${templateScopeClause}
       ),
       ranked_rows AS (
         SELECT
@@ -625,19 +1005,12 @@ async function getExerciseProgress(
   {
     beforeDate = null,
     limit = 3,
-    templateId = null,
     timeZone = 'UTC',
   } = {},
 ) {
   await ensureGymSchema();
   const today = beforeDate || await getServerToday({ timeZone });
   const params = [exerciseId, today];
-  const templateScopeClause = templateId
-    ? (() => {
-        params.push(templateId);
-        return `AND gs.template_id = $${params.length}`;
-      })()
-    : '';
   params.push(limit);
 
   const result = await pool.query(
@@ -654,7 +1027,6 @@ async function getExerciseProgress(
       JOIN gym_sessions gs ON gs.id = ge.session_id
       WHERE gst.logged_exercise_id = $1
         AND gs.date < $2
-        ${templateScopeClause}
       GROUP BY gs.id, gs.date
       ORDER BY gs.date DESC, gs.id DESC
       LIMIT $${params.length}
@@ -704,6 +1076,15 @@ async function listRecentExercises(limit = 12) {
 async function saveGymSet({ exerciseId, setNumber, weight, reps, rir }) {
   await ensureGymSchema();
   await assertExerciseSessionIsActive(exerciseId);
+
+  await pool.query(
+    `
+      UPDATE gym_exercises
+      SET target_sets = GREATEST(COALESCE(target_sets, 1), $2), updated_at = NOW()
+      WHERE id = $1
+    `,
+    [exerciseId, setNumber],
+  );
 
   // Snapshot the current effective exercise on each set so today's swap does
   // not leak back into older sets or today's already-logged rows.
@@ -804,13 +1185,23 @@ async function updateSessionExerciseOverride(
   let nextAlternateId = null;
   let nextExerciseName = currentExercise.current_effective_exercise_name;
   let nextExerciseId = currentExercise.exercise_id;
+  let nextTargets = await getBaseTargetsForTemplateExercise(currentExercise.template_exercise_id);
 
   if (overrideAlternateId !== null) {
     const alternateResult = await pool.query(
       `
-        SELECT tea.id, tea.exercise_id, ex.name
+        SELECT
+          tea.id,
+          tea.exercise_id,
+          ex.name,
+          COALESCE(tea.target_sets, ts.target_sets, ex.default_target_sets, 1)::int AS target_sets,
+          COALESCE(tea.rep_min, ts.rep_min, ex.default_rep_min)::int AS rep_min,
+          COALESCE(tea.rep_max, ts.rep_max, ex.default_rep_max)::int AS rep_max,
+          COALESCE(tea.target_rir, ts.target_rir, ex.default_target_rir)::int AS target_rir
         FROM template_exercise_alternates tea
         JOIN exercises ex ON ex.id = tea.exercise_id
+        JOIN template_exercises te ON te.id = tea.template_exercise_id
+        LEFT JOIN template_sets ts ON ts.template_exercise_id = te.id
         WHERE tea.id = $1
           AND tea.template_exercise_id = $2
       `,
@@ -826,6 +1217,12 @@ async function updateSessionExerciseOverride(
     nextAlternateId = Number(alternateResult.rows[0].id);
     nextExerciseId = Number(alternateResult.rows[0].exercise_id);
     nextExerciseName = alternateResult.rows[0].name;
+    nextTargets = {
+      target_sets: Number(alternateResult.rows[0].target_sets || 1),
+      rep_min: alternateResult.rows[0].rep_min === null ? null : Number(alternateResult.rows[0].rep_min),
+      rep_max: alternateResult.rows[0].rep_max === null ? null : Number(alternateResult.rows[0].rep_max),
+      target_rir: alternateResult.rows[0].target_rir === null ? null : Number(alternateResult.rows[0].target_rir),
+    };
   }
 
   if (
@@ -843,10 +1240,23 @@ async function updateSessionExerciseOverride(
   await pool.query(
     `
       UPDATE gym_exercises
-      SET override_alternate_id = $2, updated_at = NOW()
+      SET
+        override_alternate_id = $2,
+        target_sets = $3,
+        rep_min = $4,
+        rep_max = $5,
+        target_rir = $6,
+        updated_at = NOW()
       WHERE id = $1
     `,
-    [sessionExerciseId, nextAlternateId],
+    [
+      sessionExerciseId,
+      nextAlternateId,
+      Math.max(Number(nextTargets.target_sets || 1), Number(currentExercise.set_count || 0)),
+      nextTargets.rep_min,
+      nextTargets.rep_max,
+      nextTargets.target_rir,
+    ],
   );
 
   return {
@@ -889,6 +1299,7 @@ module.exports = {
   deleteLoggedSessionExercise,
   deleteGymSession,
   updateGymExerciseStatus,
+  updateSessionExerciseTargets,
   listGymSessions,
   getGymSessionDetail,
   getExerciseHistory,

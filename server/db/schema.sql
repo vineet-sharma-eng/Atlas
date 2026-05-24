@@ -10,6 +10,10 @@ CREATE TABLE exercises (
 id SERIAL PRIMARY KEY,
 name TEXT NOT NULL,
 muscle_group TEXT,
+default_target_sets INTEGER CHECK (default_target_sets IS NULL OR default_target_sets > 0),
+default_rep_min INTEGER CHECK (default_rep_min IS NULL OR default_rep_min > 0),
+default_rep_max INTEGER CHECK (default_rep_max IS NULL OR default_rep_max > 0),
+default_target_rir INTEGER CHECK (default_target_rir IS NULL OR default_target_rir BETWEEN 0 AND 4),
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -41,6 +45,7 @@ template_exercise_id INTEGER NOT NULL REFERENCES template_exercises(id) ON DELET
 target_sets INTEGER NOT NULL CHECK (target_sets > 0),
 rep_min INTEGER,
 rep_max INTEGER,
+target_rir INTEGER CHECK (target_rir IS NULL OR target_rir BETWEEN 0 AND 4),
 notes TEXT,
 created_at TIMESTAMP DEFAULT NOW()
 );
@@ -52,6 +57,10 @@ CREATE TABLE template_exercise_alternates (
 id SERIAL PRIMARY KEY,
 template_exercise_id INTEGER NOT NULL REFERENCES template_exercises(id) ON DELETE CASCADE,
 exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
+target_sets INTEGER CHECK (target_sets IS NULL OR target_sets > 0),
+rep_min INTEGER CHECK (rep_min IS NULL OR rep_min > 0),
+rep_max INTEGER CHECK (rep_max IS NULL OR rep_max > 0),
+target_rir INTEGER CHECK (target_rir IS NULL OR target_rir BETWEEN 0 AND 4),
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -85,6 +94,10 @@ override_alternate_id INTEGER REFERENCES template_exercise_alternates(id) ON DEL
 exercise_name TEXT NOT NULL,
 muscle_group TEXT,
 order_index INTEGER NOT NULL,
+target_sets INTEGER CHECK (target_sets IS NULL OR target_sets > 0),
+rep_min INTEGER CHECK (rep_min IS NULL OR rep_min > 0),
+rep_max INTEGER CHECK (rep_max IS NULL OR rep_max > 0),
+target_rir INTEGER CHECK (target_rir IS NULL OR target_rir BETWEEN 0 AND 4),
 status TEXT NOT NULL DEFAULT 'pending'
 CHECK (status IN ('pending', 'completed', 'skipped')),
 created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -120,3 +133,19 @@ ON template_exercises(exercise_name);
 
 CREATE INDEX idx_gym_sessions_date
 ON gym_sessions(date);
+
+CREATE TABLE exercise_notes (
+id SERIAL PRIMARY KEY,
+exercise_id INTEGER NOT NULL REFERENCES exercises(id) ON DELETE CASCADE,
+body TEXT NOT NULL CHECK (BTRIM(body) <> ''),
+is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_exercise_notes_single_pinned
+ON exercise_notes(exercise_id)
+WHERE is_pinned = TRUE;
+
+CREATE INDEX idx_exercise_notes_exercise_updated
+ON exercise_notes(exercise_id, updated_at DESC, id DESC);

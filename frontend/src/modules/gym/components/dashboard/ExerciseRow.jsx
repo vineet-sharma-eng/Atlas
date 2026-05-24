@@ -6,6 +6,7 @@ const INITIAL_FORM_STATE = {
   targetSets: '',
   repMin: '',
   repMax: '',
+  targetRir: '',
 };
 
 export function ExerciseRow({
@@ -26,6 +27,7 @@ export function ExerciseRow({
       targetSets: String(exercise.target_sets ?? ''),
       repMin: exercise.rep_min === null ? '' : String(exercise.rep_min),
       repMax: exercise.rep_max === null ? '' : String(exercise.rep_max),
+      targetRir: exercise.target_rir === null ? '' : String(exercise.target_rir),
     });
   }, [exercise]);
 
@@ -36,6 +38,7 @@ export function ExerciseRow({
       target_sets: Number(formValues.targetSets),
       rep_min: formValues.repMin === '' ? null : Number(formValues.repMin),
       rep_max: formValues.repMax === '' ? null : Number(formValues.repMax),
+      target_rir: formValues.targetRir === '' ? null : Number(formValues.targetRir),
     });
   }
 
@@ -118,7 +121,7 @@ export function ExerciseRow({
           </div>
         </div>
 
-        <form className="grid gap-3 sm:grid-cols-[repeat(3,minmax(0,1fr))_140px]" onSubmit={handleSubmit}>
+        <form className="grid gap-3 sm:grid-cols-[repeat(4,minmax(0,1fr))_140px]" onSubmit={handleSubmit}>
           <label className="block">
             <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
               Sets
@@ -171,6 +174,26 @@ export function ExerciseRow({
                 setFormValues((current) => ({
                   ...current,
                   repMax: event.target.value,
+                }))
+              }
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              Target RIR
+            </span>
+            <input
+              className="w-full rounded-2xl border border-atlas-line bg-atlas-night px-3 py-3 text-sm text-atlas-ink"
+              type="number"
+              min="0"
+              max="4"
+              inputMode="numeric"
+              value={formValues.targetRir}
+              onChange={(event) =>
+                setFormValues((current) => ({
+                  ...current,
+                  targetRir: event.target.value,
                 }))
               }
             />

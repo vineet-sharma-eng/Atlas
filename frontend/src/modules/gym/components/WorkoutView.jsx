@@ -4,8 +4,13 @@ import { ExerciseAccordion } from './ExerciseAccordion';
 import { formatExerciseName, formatLocalDate } from '../utils/formatters';
 
 const INITIAL_EXERCISE_FORM = {
+  exerciseId: '',
   exerciseName: '',
   muscleGroup: '',
+  targetSets: '3',
+  repMin: '8',
+  repMax: '12',
+  targetRir: '2',
 };
 
 export function WorkoutView({
@@ -27,23 +32,36 @@ export function WorkoutView({
   isWorkoutComplete,
   exerciseCatalog,
   isLoadingExerciseCatalog,
+  exerciseNotesById,
+  loadingExerciseNotesById,
+  exerciseNotesErrorById,
   onOpenExercise,
   onAddExercise,
   onRemoveExercise,
   onUpdateExerciseStatus,
   onSaveSet,
+  onUpdateSessionTargets,
+  onSaveTargetsToTemplate,
+  onSaveExerciseDefaults,
   onEndSession,
   onAddExerciseToTemplate,
   onLoadExerciseHistory,
+  onLoadExerciseNotes,
+  onCreateExerciseNote,
+  onUpdateExerciseNote,
+  onDeleteExerciseNote,
   onLoadAlternates,
   onSearchExerciseCatalog,
   onCreateAlternate,
+  onUpdateAlternate,
+  onDeleteAlternate,
   onSwapExercise,
 }) {
   const [formValues, setFormValues] = useState(INITIAL_EXERCISE_FORM);
   const [showAddExerciseSheet, setShowAddExerciseSheet] = useState(false);
   const [showSessionActions, setShowSessionActions] = useState(false);
   const [showEndSessionReview, setShowEndSessionReview] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
   const elapsedLabel = useSessionTimerLabel(session?.started_at, session?.ended_at);
   const progressLabel = `${sessionSummary.completed + sessionSummary.skipped}/${sessionSummary.total || 0}`;
   const unresolvedExercises = sessionSummary.unresolvedExercises;
@@ -73,10 +91,7 @@ export function WorkoutView({
       return;
     }
 
-    onAddExercise({
-      exerciseName,
-      muscleGroup: formValues.muscleGroup.trim(),
-    })
+    onAddExercise(buildAddExercisePayload(formValues, { addToTemplate: false }))
       .then((didAddExercise) => {
         if (didAddExercise) {
           setFormValues(INITIAL_EXERCISE_FORM);
@@ -92,9 +107,27 @@ export function WorkoutView({
     }
 
     onAddExercise({
+      exerciseId: exercise.exercise_id,
       exerciseName: exercise.exercise_name,
       muscleGroup: exercise.muscle_group || '',
+      targetSets: exercise.default_target_sets || 3,
+      repMin: exercise.default_rep_min ?? 8,
+      repMax: exercise.default_rep_max ?? 12,
+      targetRir: exercise.default_target_rir ?? 2,
     }).catch(() => {});
+  }
+
+  function handlePickCatalogExercise(exercise) {
+    setFormValues((currentValues) => ({
+      ...currentValues,
+      exerciseId: String(exercise.id),
+      exerciseName: exercise.name,
+      muscleGroup: exercise.muscle_group || currentValues.muscleGroup,
+      targetSets: String(exercise.default_target_sets || currentValues.targetSets || 3),
+      repMin: exercise.default_rep_min === null ? currentValues.repMin : String(exercise.default_rep_min),
+      repMax: exercise.default_rep_max === null ? currentValues.repMax : String(exercise.default_rep_max),
+      targetRir: exercise.default_target_rir === null ? currentValues.targetRir : String(exercise.default_target_rir),
+    }));
   }
 
   async function handleConfirmEndSession() {
@@ -193,15 +226,27 @@ export function WorkoutView({
                 isWorkoutComplete={isWorkoutComplete}
                 exerciseCatalog={exerciseCatalog}
                 isLoadingExerciseCatalog={isLoadingExerciseCatalog}
+                exerciseNotes={exerciseNotesById[exercise.effective_exercise_id] || []}
+                isLoadingExerciseNotes={loadingExerciseNotesById[exercise.effective_exercise_id] === true}
+                exerciseNotesError={exerciseNotesErrorById[exercise.effective_exercise_id] || ''}
                 onToggle={() => handleOpenExercise(exerciseId)}
                 onSaveSet={onSaveSet}
+                onUpdateSessionTargets={onUpdateSessionTargets}
+                onSaveTargetsToTemplate={onSaveTargetsToTemplate}
+                onSaveExerciseDefaults={onSaveExerciseDefaults}
                 onRemoveExercise={onRemoveExercise}
                 onUpdateExerciseStatus={onUpdateExerciseStatus}
                 onAddExerciseToTemplate={onAddExerciseToTemplate}
                 onLoadHistory={() => onLoadExerciseHistory(exercise)}
+                onLoadExerciseNotes={() => onLoadExerciseNotes(exercise)}
+                onCreateExerciseNote={(body) => onCreateExerciseNote(exercise, body)}
+                onUpdateExerciseNote={(noteId, payload) => onUpdateExerciseNote(exercise, noteId, payload)}
+                onDeleteExerciseNote={(noteId) => onDeleteExerciseNote(exercise, noteId)}
                 onLoadAlternates={() => onLoadAlternates(exercise.template_exercise_id)}
                 onSearchExerciseCatalog={onSearchExerciseCatalog}
                 onCreateAlternate={onCreateAlternate}
+                onUpdateAlternate={onUpdateAlternate}
+                onDeleteAlternate={onDeleteAlternate}
                 onSwapExercise={onSwapExercise}
               />
             );
@@ -288,6 +333,52 @@ export function WorkoutView({
             </div>
           ) : null}
 
+          <div className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+              Exercise catalog
+            </div>
+            <input
+              className="mt-3 w-full rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-3 text-base text-atlas-ink"
+              type="text"
+              placeholder="Search existing exercises"
+              value={catalogSearch}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setCatalogSearch(nextValue);
+                void onSearchExerciseCatalog(nextValue);
+              }}
+            />
+            <div className="mt-3 max-h-40 space-y-2 overflow-y-auto">
+              {exerciseCatalog.slice(0, 8).map((catalogExercise) => (
+                <button
+                  key={catalogExercise.id}
+                  type="button"
+                  className={`flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left ${
+                    String(formValues.exerciseId) === String(catalogExercise.id)
+                      ? 'border-atlas-accent bg-atlas-accentSoft/40'
+                      : 'border-atlas-line bg-atlas-panel'
+                  }`}
+                  onClick={() => handlePickCatalogExercise(catalogExercise)}
+                >
+                  <div>
+                    <div className="text-sm font-medium text-atlas-ink">
+                      {formatExerciseName(catalogExercise.name)}
+                    </div>
+                    <div className="mt-1 text-xs text-atlas-slate">
+                      {catalogExercise.muscle_group || 'Exercise'}
+                    </div>
+                  </div>
+                  <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100">
+                    Pick
+                  </span>
+                </button>
+              ))}
+              {isLoadingExerciseCatalog ? (
+                <div className="px-1 py-2 text-sm text-atlas-slate">Loading exercises...</div>
+              ) : null}
+            </div>
+          </div>
+
           <label className="block">
             <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-atlas-slate">
               Exercise
@@ -301,6 +392,7 @@ export function WorkoutView({
               onChange={(event) =>
                 setFormValues((currentValues) => ({
                   ...currentValues,
+                  exerciseId: '',
                   exerciseName: event.target.value,
                 }))
               }
@@ -331,6 +423,54 @@ export function WorkoutView({
             </select>
           </label>
 
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <NumericConfigField
+              label="Sets"
+              value={formValues.targetSets}
+              min="1"
+              onChange={(value) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  targetSets: value,
+                }))
+              }
+            />
+            <NumericConfigField
+              label="Rep min"
+              value={formValues.repMin}
+              min="1"
+              onChange={(value) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  repMin: value,
+                }))
+              }
+            />
+            <NumericConfigField
+              label="Rep max"
+              value={formValues.repMax}
+              min="1"
+              onChange={(value) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  repMax: value,
+                }))
+              }
+            />
+            <NumericConfigField
+              label="Target RIR"
+              value={formValues.targetRir}
+              min="0"
+              max="4"
+              onChange={(value) =>
+                setFormValues((currentValues) => ({
+                  ...currentValues,
+                  targetRir: value,
+                }))
+              }
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
@@ -344,9 +484,26 @@ export function WorkoutView({
               className="rounded-2xl bg-atlas-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
               disabled={!isSessionEditable || isAddingExercise || formValues.exerciseName.trim() === ''}
             >
-              {isAddingExercise ? 'Adding...' : 'Add exercise'}
+              {isAddingExercise ? 'Adding...' : 'Add today'}
             </button>
           </div>
+          <button
+            type="button"
+            className="w-full rounded-2xl border border-atlas-accent/40 bg-atlas-accentSoft/40 px-4 py-3 text-sm font-medium text-blue-100 disabled:opacity-60"
+            disabled={!isSessionEditable || isAddingExercise || formValues.exerciseName.trim() === ''}
+            onClick={() => {
+              onAddExercise(buildAddExercisePayload(formValues, { addToTemplate: true }))
+                .then((didAddExercise) => {
+                  if (didAddExercise) {
+                    setFormValues(INITIAL_EXERCISE_FORM);
+                    setShowAddExerciseSheet(false);
+                  }
+                })
+                .catch(() => {});
+            }}
+          >
+            Add today and future sessions
+          </button>
         </form>
       </BottomSheet>
 
@@ -440,6 +597,38 @@ function SummaryChip({ label, value, tone }) {
       <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
   );
+}
+
+function NumericConfigField({ label, value, min, max, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+        {label}
+      </span>
+      <input
+        className="w-full rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3 text-sm text-atlas-ink"
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function buildAddExercisePayload(formValues, { addToTemplate }) {
+  return {
+    exerciseId: formValues.exerciseId ? Number(formValues.exerciseId) : null,
+    exerciseName: formValues.exerciseName.trim(),
+    muscleGroup: formValues.muscleGroup.trim(),
+    targetSets: Number(formValues.targetSets || 1),
+    repMin: formValues.repMin === '' ? null : Number(formValues.repMin),
+    repMax: formValues.repMax === '' ? null : Number(formValues.repMax),
+    targetRir: formValues.targetRir === '' ? null : Number(formValues.targetRir),
+    addToTemplate,
+  };
 }
 
 function ActionDots() {

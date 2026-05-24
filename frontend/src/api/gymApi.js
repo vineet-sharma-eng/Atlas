@@ -88,6 +88,13 @@ export function updateGymTemplateSet(templateSetId, payload) {
   });
 }
 
+export function updateGymExerciseDefaults(exerciseId, payload) {
+  return request(`/gym/exercises/${exerciseId}/defaults`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function duplicateGymTemplate(templateId) {
   return request(`/gym/template/${templateId}/duplicate`, {
     method: 'POST',
@@ -134,13 +141,27 @@ export function deleteGymSessionHistory(sessionId) {
   });
 }
 
-export function addGymExercise({ sessionId, exerciseName, muscleGroup }) {
+export function addGymExercise({
+  sessionId,
+  exerciseId,
+  exerciseName,
+  muscleGroup,
+  targetSets,
+  repMin,
+  repMax,
+  targetRir,
+}) {
   return request('/gym/exercise', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
+      exercise_id: exerciseId,
       exercise_name: exerciseName,
       muscle_group: muscleGroup,
+      target_sets: targetSets,
+      rep_min: repMin,
+      rep_max: repMax,
+      target_rir: targetRir,
     }),
   });
 }
@@ -171,6 +192,13 @@ export function updateGymSessionExerciseOverride(sessionExerciseId, payload) {
   });
 }
 
+export function updateGymSessionExerciseTargets(sessionExerciseId, payload) {
+  return request(`/gym/session-exercise/${sessionExerciseId}/targets`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export function createGymSet({ exerciseId, setNumber, weight, reps, rir }) {
   return request('/gym/set', {
     method: 'POST',
@@ -184,13 +212,27 @@ export function createGymSet({ exerciseId, setNumber, weight, reps, rir }) {
   });
 }
 
-export function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) {
+export function addExerciseToTemplate({
+  templateId,
+  exerciseId,
+  exerciseName,
+  muscleGroup,
+  targetSets,
+  repMin,
+  repMax,
+  targetRir,
+}) {
   return request('/gym/template/exercise/add', {
     method: 'POST',
     body: JSON.stringify({
       template_id: templateId,
+      exercise_id: exerciseId,
       exercise_name: exerciseName,
       muscle_group: muscleGroup,
+      target_sets: targetSets,
+      rep_min: repMin,
+      rep_max: repMax,
+      target_rir: targetRir,
     }),
   });
 }
@@ -206,30 +248,59 @@ export function createGymTemplateExerciseAlternate(templateExerciseId, payload) 
   });
 }
 
-export function getGymExerciseHistory(exerciseId, { beforeDate, templateId, limit = 3 } = {}) {
+export function updateGymTemplateExerciseAlternate(alternateId, payload) {
+  return request(`/gym/template/exercise/alternates/${alternateId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteGymTemplateExerciseAlternate(alternateId) {
+  return request(`/gym/template/exercise/alternates/${alternateId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function getGymExerciseNotes(exerciseId) {
+  return request(`/gym/exercises/${exerciseId}/notes`);
+}
+
+export function createGymExerciseNote(exerciseId, payload) {
+  return request(`/gym/exercises/${exerciseId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateGymExerciseNote(exerciseId, noteId, payload) {
+  return request(`/gym/exercises/${exerciseId}/notes/${noteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteGymExerciseNote(exerciseId, noteId) {
+  return request(`/gym/exercises/${exerciseId}/notes/${noteId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function getGymExerciseHistory(exerciseId, { beforeDate, limit = 3 } = {}) {
   const params = new URLSearchParams();
 
   if (beforeDate) {
     params.set('before_date', beforeDate);
-  }
-
-  if (templateId) {
-    params.set('template_id', String(templateId));
   }
 
   params.set('limit', String(limit));
   return request(`/gym/exercises/${exerciseId}/history?${params.toString()}`);
 }
 
-export function getGymExerciseProgress(exerciseId, { beforeDate, templateId, limit = 3 } = {}) {
+export function getGymExerciseProgress(exerciseId, { beforeDate, limit = 3 } = {}) {
   const params = new URLSearchParams();
 
   if (beforeDate) {
     params.set('before_date', beforeDate);
-  }
-
-  if (templateId) {
-    params.set('template_id', String(templateId));
   }
 
   params.set('limit', String(limit));

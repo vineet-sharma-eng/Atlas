@@ -1,11 +1,14 @@
 const {
   addExerciseToTemplate,
   createGymExercise,
+  createExerciseNote,
   createOrResumeSession,
   createTemplateExerciseAlternate,
+  deleteExerciseNote,
   deleteGymExercise,
   deleteGymSession,
   deleteLoggedSessionExercise,
+  deleteTemplateExerciseAlternate,
   duplicateTemplate,
   endGymSession,
   getActiveSessionState,
@@ -20,12 +23,17 @@ const {
   listGymSessions,
   listRecentExercises,
   listWorkoutTemplates,
+  listExerciseNotes,
   renameExercise,
   reorderTemplateExercises,
   saveGymSet,
   toggleTemplateExercise,
+  updateExerciseDefaults,
+  updateExerciseNote,
   updateGymExerciseStatus,
   updateSessionExerciseOverride,
+  updateSessionExerciseTargets,
+  updateTemplateExerciseAlternate,
   updateTemplateName,
   updateTemplateSet,
 } = require('../../db/gym');
@@ -164,17 +172,21 @@ async function endSession(req, res, next) {
 async function addExercise(req, res, next) {
   try {
     const sessionId = parsePositiveInteger(req.body.session_id, 'session_id');
+    const exerciseId = req.body.exercise_id ? parsePositiveInteger(req.body.exercise_id, 'exercise_id') : null;
     const exerciseName = String(req.body.exercise_name || '').trim();
     const muscleGroup = String(req.body.muscle_group || '').trim();
+    const targets = parseTargetPayload(req.body, { requireTargetSets: false });
 
-    if (!exerciseName) {
-      return res.status(400).json({ error: 'exercise_name is required' });
+    if (!exerciseId && !exerciseName) {
+      return res.status(400).json({ error: 'exercise_id or exercise_name is required' });
     }
 
     const exercise = await createGymExercise({
       sessionId,
+      exerciseId,
       exerciseName,
       muscleGroup,
+      ...targets,
     });
 
     return res.status(201).json(exercise);
@@ -273,17 +285,21 @@ async function addSet(req, res, next) {
 async function addTemplateExercise(req, res, next) {
   try {
     const templateId = parsePositiveInteger(req.body.template_id, 'template_id');
+    const exerciseId = req.body.exercise_id ? parsePositiveInteger(req.body.exercise_id, 'exercise_id') : null;
     const exerciseName = String(req.body.exercise_name || '').trim();
     const muscleGroup = String(req.body.muscle_group || '').trim();
+    const targets = parseTargetPayload(req.body, { requireTargetSets: false });
 
-    if (!exerciseName) {
-      return res.status(400).json({ error: 'exercise_name is required' });
+    if (!exerciseId && !exerciseName) {
+      return res.status(400).json({ error: 'exercise_id or exercise_name is required' });
     }
 
     return res.status(201).json(await addExerciseToTemplate({
       templateId,
+      exerciseId,
       exerciseName,
       muscleGroup,
+      ...targets,
     }));
   } catch (error) {
     return next(error);
@@ -406,19 +422,9 @@ async function getSessionDetail(req, res, next) {
 async function updateTemplateSetHandler(req, res, next) {
   try {
     const templateSetId = parsePositiveInteger(req.params.id, 'template set id');
-    const targetSets = parsePositiveInteger(req.body.target_sets, 'target_sets');
-    const repMin = parseNullableInteger(req.body.rep_min, 'rep_min');
-    const repMax = parseNullableInteger(req.body.rep_max, 'rep_max');
+    const targets = parseTargetPayload(req.body, { requireTargetSets: true });
 
-    if ((repMin === null) !== (repMax === null)) {
-      return res.status(400).json({ error: 'rep_min and rep_max must both be null or both be integers' });
-    }
-
-    if (repMin !== null && repMax !== null && repMin > repMax) {
-      return res.status(400).json({ error: 'rep_min must be less than or equal to rep_max' });
-    }
-
-    const templateSet = await updateTemplateSet(templateSetId, { targetSets, repMin, repMax });
+    const templateSet = await updateTemplateSet(templateSetId, targets);
 
     if (!templateSet) {
       return res.status(404).json({ error: 'Template set not found' });
@@ -434,12 +440,10 @@ async function getExerciseHistoryHandler(req, res, next) {
   try {
     const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
     const beforeDate = req.query.before_date ? parseDate(req.query.before_date) : null;
-    const templateId = req.query.template_id ? parsePositiveInteger(req.query.template_id, 'template_id') : null;
     const limit = req.query.limit ? parsePositiveInteger(req.query.limit, 'limit') : 3;
     return res.status(200).json(await getExerciseHistory(exerciseId, {
       beforeDate,
       limit,
-      templateId,
       timeZone: getUserTimeZone(req),
     }));
   } catch (error) {
@@ -451,12 +455,10 @@ async function getExerciseProgressHandler(req, res, next) {
   try {
     const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
     const beforeDate = req.query.before_date ? parseDate(req.query.before_date) : null;
-    const templateId = req.query.template_id ? parsePositiveInteger(req.query.template_id, 'template_id') : null;
     const limit = req.query.limit ? parsePositiveInteger(req.query.limit, 'limit') : 3;
     return res.status(200).json(await getExerciseProgress(exerciseId, {
       beforeDate,
       limit,
-      templateId,
       timeZone: getUserTimeZone(req),
     }));
   } catch (error) {
@@ -479,6 +481,7 @@ async function createTemplateExerciseAlternateHandler(req, res, next) {
     const exerciseId = req.body.exercise_id ? parsePositiveInteger(req.body.exercise_id, 'exercise_id') : null;
     const name = String(req.body.name || '').trim();
     const muscleGroup = String(req.body.muscle_group || '').trim();
+    const targets = parseTargetPayload(req.body, { requireTargetSets: false });
 
     if (!exerciseId && !name) {
       return res.status(400).json({ error: 'exercise_id or name is required' });
@@ -488,7 +491,130 @@ async function createTemplateExerciseAlternateHandler(req, res, next) {
       exerciseId,
       name,
       muscleGroup,
+      ...targets,
     }));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function updateTemplateExerciseAlternateHandler(req, res, next) {
+  try {
+    const alternateId = parsePositiveInteger(req.params.id, 'alternate id');
+    const targets = parseTargetPayload(req.body, { requireTargetSets: false });
+    const alternates = await updateTemplateExerciseAlternate(alternateId, targets);
+
+    if (!alternates) {
+      return res.status(404).json({ error: 'Alternate exercise not found' });
+    }
+
+    return res.status(200).json(alternates);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function deleteTemplateExerciseAlternateHandler(req, res, next) {
+  try {
+    const alternateId = parsePositiveInteger(req.params.id, 'alternate id');
+    const alternates = await deleteTemplateExerciseAlternate(alternateId);
+
+    if (!alternates) {
+      return res.status(404).json({ error: 'Alternate exercise not found' });
+    }
+
+    return res.status(200).json(alternates);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function updateSessionExerciseTargetsHandler(req, res, next) {
+  try {
+    const sessionExerciseId = parsePositiveInteger(req.params.id, 'session exercise id');
+    const targets = parseTargetPayload(req.body, { requireTargetSets: true });
+    const exercise = await updateSessionExerciseTargets(sessionExerciseId, targets);
+
+    if (!exercise) {
+      return res.status(404).json({ error: 'Gym exercise not found' });
+    }
+
+    return res.status(200).json(exercise);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function updateExerciseDefaultsHandler(req, res, next) {
+  try {
+    const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
+    const targets = parseTargetPayload(req.body, { requireTargetSets: true });
+    const exercise = await updateExerciseDefaults(exerciseId, targets);
+
+    if (!exercise) {
+      return res.status(404).json({ error: 'Exercise not found' });
+    }
+
+    return res.status(200).json(exercise);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function listExerciseNotesHandler(req, res, next) {
+  try {
+    const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
+    return res.status(200).json(await listExerciseNotes(exerciseId));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function createExerciseNoteHandler(req, res, next) {
+  try {
+    const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
+    const body = String(req.body.body || '').trim();
+    const note = await createExerciseNote(exerciseId, {
+      body,
+      pin: req.body.is_pinned !== false,
+    });
+
+    return res.status(201).json(note);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function updateExerciseNoteHandler(req, res, next) {
+  try {
+    const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
+    const noteId = parsePositiveInteger(req.params.note_id, 'note id');
+    const note = await updateExerciseNote(exerciseId, noteId, {
+      body: req.body.body === undefined ? undefined : String(req.body.body || '').trim(),
+      isPinned: req.body.is_pinned === undefined ? undefined : req.body.is_pinned === true,
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: 'Exercise note not found' });
+    }
+
+    return res.status(200).json(note);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function deleteExerciseNoteHandler(req, res, next) {
+  try {
+    const exerciseId = parsePositiveInteger(req.params.id, 'exercise id');
+    const noteId = parsePositiveInteger(req.params.note_id, 'note id');
+    const note = await deleteExerciseNote(exerciseId, noteId);
+
+    if (!note) {
+      return res.status(404).json({ error: 'Exercise note not found' });
+    }
+
+    return res.status(204).send();
   } catch (error) {
     return next(error);
   }
@@ -579,6 +705,55 @@ function parseNullableInteger(value, fieldName) {
   return parsePositiveInteger(value, fieldName);
 }
 
+function parseNullableBoundedInteger(value, fieldName, { min, max }) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    const error = new Error(`${fieldName} must be an integer between ${min} and ${max}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return parsed;
+}
+
+function parseTargetPayload(payload, { requireTargetSets = false } = {}) {
+  const hasTargetSets = payload.target_sets !== null
+    && payload.target_sets !== undefined
+    && payload.target_sets !== '';
+  const targetSets = hasTargetSets
+    ? parsePositiveInteger(payload.target_sets, 'target_sets')
+    : requireTargetSets
+      ? parsePositiveInteger(payload.target_sets, 'target_sets')
+      : null;
+  const repMin = parseNullableInteger(payload.rep_min, 'rep_min');
+  const repMax = parseNullableInteger(payload.rep_max, 'rep_max');
+  const targetRir = parseNullableBoundedInteger(payload.target_rir, 'target_rir', { min: 0, max: 4 });
+
+  if ((repMin === null) !== (repMax === null)) {
+    const error = new Error('rep_min and rep_max must both be null or both be integers');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (repMin !== null && repMax !== null && repMin > repMax) {
+    const error = new Error('rep_min must be less than or equal to rep_max');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    targetSets,
+    repMin,
+    repMax,
+    targetRir,
+  };
+}
+
 function parseDate(value) {
   const candidate = String(value || '').trim();
 
@@ -648,6 +823,14 @@ module.exports = {
   getExerciseProgressHandler,
   getTemplateExerciseAlternatesHandler,
   createTemplateExerciseAlternateHandler,
+  updateTemplateExerciseAlternateHandler,
+  deleteTemplateExerciseAlternateHandler,
   updateSessionExerciseOverrideHandler,
+  updateSessionExerciseTargetsHandler,
+  updateExerciseDefaultsHandler,
+  listExerciseNotesHandler,
+  createExerciseNoteHandler,
+  updateExerciseNoteHandler,
+  deleteExerciseNoteHandler,
   duplicateTemplateHandler,
 };

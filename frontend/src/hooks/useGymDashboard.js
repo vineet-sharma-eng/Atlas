@@ -304,6 +304,7 @@ export function useGymDashboard() {
                   target_sets: Number(updatedSet.target_sets),
                   rep_min: updatedSet.rep_min === null ? null : Number(updatedSet.rep_min),
                   rep_max: updatedSet.rep_max === null ? null : Number(updatedSet.rep_max),
+                  target_rir: updatedSet.target_rir === null ? null : Number(updatedSet.target_rir),
                 }
               : exercise,
           ),
@@ -423,7 +424,7 @@ export function useGymDashboard() {
 
   async function loadExerciseInsight(exercise) {
     const exerciseId = Number(exercise?.effective_exercise_id || 0);
-    const insightKey = getExerciseInsightKey(exercise, sessionDetail?.template_id);
+    const insightKey = getExerciseInsightKey(exercise);
 
     if (!exerciseId || !insightKey || attemptedExerciseInsightById[insightKey] || loadingExerciseInsightById[insightKey]) {
       return;
@@ -439,10 +440,9 @@ export function useGymDashboard() {
     }));
 
     try {
-      const templateId = getExerciseTemplateScopeId(exercise, sessionDetail?.template_id);
       const [history, progress] = await Promise.all([
-        getGymExerciseHistory(exerciseId, { templateId, limit: 3 }),
-        getGymExerciseProgress(exerciseId, { templateId, limit: 3 }),
+        getGymExerciseHistory(exerciseId, { limit: 3 }),
+        getGymExerciseProgress(exerciseId, { limit: 3 }),
       ]);
 
       setExerciseInsightById((currentState) => ({
@@ -543,21 +543,12 @@ function compareTemplates(left, right) {
   return String(left.name).localeCompare(String(right.name));
 }
 
-function getExerciseTemplateScopeId(exercise, templateId) {
-  if (!exercise?.template_exercise_id || !templateId) {
-    return undefined;
-  }
-
-  return Number(templateId);
-}
-
-function getExerciseInsightKey(exercise, templateId) {
+function getExerciseInsightKey(exercise) {
   const exerciseId = Number(exercise?.effective_exercise_id || 0);
 
   if (!exerciseId) {
     return '';
   }
 
-  const templateScopeId = getExerciseTemplateScopeId(exercise, templateId);
-  return `${exerciseId}:${templateScopeId || 'all'}`;
+  return `${exerciseId}:all`;
 }

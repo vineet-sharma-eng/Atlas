@@ -9,7 +9,8 @@ function isTimeBasedExercise(notes) {
 
 function buildRows(exercise) {
   const currentSetsByNumber = new Map(exercise.sets.map((set) => [set.set_number, set]));
-  const prefillSetsByNumber = new Map(exercise.prefill_sets.map((set) => [set.set_number, set]));
+  const prefillSets = Array.isArray(exercise.prefill_sets) ? exercise.prefill_sets : [];
+  const prefillSetsByNumber = new Map(prefillSets.map((set) => [set.set_number, set]));
 
   let previousWeight = '';
 
@@ -30,7 +31,7 @@ function buildRows(exercise) {
       setNumber,
       weight: nextWeight === null ? '' : String(nextWeight ?? ''),
       reps: currentSet?.reps ?? prefillSet?.reps ?? '',
-      rir: currentSet?.rir ?? prefillSet?.rir ?? '',
+      rir: currentSet?.rir ?? prefillSet?.rir ?? exercise.target_rir ?? '',
       saved: Boolean(currentSet),
       savedValues: currentSet
         ? {
@@ -46,11 +47,15 @@ function buildRows(exercise) {
 }
 
 function getTargetLabel(exercise) {
+  const rirLabel = exercise.target_rir === null || exercise.target_rir === undefined
+    ? ''
+    : ` @ RIR ${exercise.target_rir}`;
+
   if (exercise.rep_min === null && exercise.rep_max === null) {
-    return `${exercise.target_sets} sets x AMRAP`;
+    return `${exercise.target_sets} sets x AMRAP${rirLabel}`;
   }
 
-  return `${exercise.target_sets} sets x ${exercise.rep_min}-${exercise.rep_max}`;
+  return `${exercise.target_sets} sets x ${exercise.rep_min}-${exercise.rep_max}${rirLabel}`;
 }
 
 export function ExerciseAccordion({
@@ -63,24 +68,44 @@ export function ExerciseAccordion({
   isWorkoutComplete,
   exerciseCatalog,
   isLoadingExerciseCatalog,
+  exerciseNotes,
+  isLoadingExerciseNotes,
+  exerciseNotesError,
   onToggle,
   onSaveSet,
+  onUpdateSessionTargets,
+  onSaveTargetsToTemplate,
+  onSaveExerciseDefaults,
   onRemoveExercise,
   onUpdateExerciseStatus,
   onAddExerciseToTemplate,
   onLoadHistory,
+  onLoadExerciseNotes,
+  onCreateExerciseNote,
+  onUpdateExerciseNote,
+  onDeleteExerciseNote,
   onLoadAlternates,
   onSearchExerciseCatalog,
   onCreateAlternate,
+  onUpdateAlternate,
+  onDeleteAlternate,
   onSwapExercise,
 }) {
   const [rows, setRows] = useState(() => buildRows(exercise));
   const [showAlternates, setShowAlternates] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [alternateName, setAlternateName] = useState('');
   const [alternateMuscleGroup, setAlternateMuscleGroup] = useState('');
+  const [alternateTargetValues, setAlternateTargetValues] = useState(() => buildTargetFormValues(exercise));
   const [alternateError, setAlternateError] = useState('');
   const [isSavingAlternate, setIsSavingAlternate] = useState(false);
+  const [targetValues, setTargetValues] = useState(() => buildTargetFormValues(exercise));
+  const [targetError, setTargetError] = useState('');
+  const [targetAction, setTargetAction] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [editingNoteById, setEditingNoteById] = useState({});
+  const [noteActionId, setNoteActionId] = useState(null);
   const [pendingSwapId, setPendingSwapId] = useState(null);
   const inputRefs = useRef(new Map());
   const timeBased = isTimeBasedExercise(exercise.notes);
@@ -90,6 +115,7 @@ export function ExerciseAccordion({
 
   useEffect(() => {
     setRows(buildRows(exercise));
+    setTargetValues(buildTargetFormValues(exercise));
   }, [exercise]);
 
   useEffect(() => {
@@ -109,6 +135,12 @@ export function ExerciseAccordion({
       void onSearchExerciseCatalog('');
     }
   }, [showAlternates, onLoadAlternates, onSearchExerciseCatalog, exerciseCatalog.length]);
+
+  useEffect(() => {
+    if (showNotes) {
+      void onLoadExerciseNotes();
+    }
+  }, [onLoadExerciseNotes, showNotes]);
 
   useEffect(() => {
     if (!isOpen || !isSessionEditable || isSkipped || isCompleted) {
@@ -305,6 +337,51 @@ export function ExerciseAccordion({
     setPendingSwapId(null);
   }
 
+  async function handleTargetAction(action) {
+    if (!exercise.session_exercise_id) {
+      return;
+    }
+
+    const normalizedTargets = normalizeTargetValues(targetValues);
+
+    if (normalizedTargets.error) {
+      setTargetError(normalizedTargets.error);
+      return;
+    }
+
+    setTargetError('');
+    setTargetAction(action);
+
+    try {
+      if (action === 'today') {
+        await onUpdateSessionTargets(exercise.session_exercise_id, normalizedTargets.targets);
+      } else if (action === 'template') {
+        await onUpdateSessionTargets(exercise.session_exercise_id, normalizedTargets.targets);
+        await onSaveTargetsToTemplate(exercise, normalizedTargets.targets);
+      } else if (action === 'defaults') {
+        await onSaveExerciseDefaults(exercise, normalizedTargets.targets);
+      }
+    } catch (error) {
+      setTargetError(error.message || 'Failed to save targets');
+    } finally {
+      setTargetAction('');
+    }
+  }
+
+  function handleAddSetToday() {
+    const nextTargetSets = String(Number(targetValues.targetSets || exercise.target_sets || 1) + 1);
+    const nextValues = {
+      ...targetValues,
+      targetSets: nextTargetSets,
+    };
+    setTargetValues(nextValues);
+
+    if (exercise.session_exercise_id) {
+      void onUpdateSessionTargets(exercise.session_exercise_id, normalizeTargetValues(nextValues).targets)
+        .catch((error) => setTargetError(error.message || 'Failed to add set'));
+    }
+  }
+
   async function handleCreateAlternate(event) {
     event.preventDefault();
 
@@ -330,13 +407,47 @@ export function ExerciseAccordion({
       await onCreateAlternate(exercise.template_exercise_id, {
         name: normalizedName,
         muscle_group: alternateMuscleGroup.trim(),
+        ...toAlternatePayload(alternateTargetValues),
       });
       setAlternateName('');
       setAlternateMuscleGroup('');
+      setAlternateTargetValues(buildTargetFormValues(exercise));
     } catch (error) {
       setAlternateError(error.message || 'Failed to add alternate');
     } finally {
       setIsSavingAlternate(false);
+    }
+  }
+
+  async function handleUpdateAlternateTargets(alternate) {
+    const normalizedTargets = normalizeTargetValues(targetValues);
+
+    if (normalizedTargets.error) {
+      setAlternateError(normalizedTargets.error);
+      return;
+    }
+
+    try {
+      await onUpdateAlternate(alternate.id, normalizedTargets.targets);
+    } catch (error) {
+      setAlternateError(error.message || 'Failed to update alternate');
+    }
+  }
+
+  async function handleCreateNote(event) {
+    event.preventDefault();
+    const body = noteDraft.trim();
+
+    if (!body) {
+      return;
+    }
+
+    setNoteActionId('new');
+    try {
+      await onCreateExerciseNote(body);
+      setNoteDraft('');
+    } finally {
+      setNoteActionId(null);
     }
   }
 
@@ -421,6 +532,107 @@ export function ExerciseAccordion({
             </p>
           ) : null}
 
+          {exercise.pinned_note?.body ? (
+            <button
+              type="button"
+              className="mb-4 w-full rounded-2xl border border-atlas-accent/40 bg-atlas-accentSoft/30 px-3 py-3 text-left text-sm text-blue-100"
+              onClick={() => setShowNotes(true)}
+            >
+              {exercise.pinned_note.body}
+            </button>
+          ) : null}
+
+          {exercise.same_day_usage ? (
+            <div className="mb-4 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
+              Earlier today: {formatExerciseName(exercise.same_day_usage.exercise_name)}
+              {exercise.same_day_usage.set_count > 0
+                ? ` (${exercise.same_day_usage.set_count} sets)`
+                : ''}
+              {exercise.same_day_usage.used_alternate ? ' as an alternate' : ''}
+            </div>
+          ) : null}
+
+          {isSessionEditable && exercise.session_exercise_id ? (
+            <div className="mb-4 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+                  Targets
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-atlas-line bg-atlas-night px-3 py-1.5 text-xs text-atlas-ink"
+                  onClick={handleAddSetToday}
+                >
+                  + Set today
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <TargetInput
+                  label="Sets"
+                  value={targetValues.targetSets}
+                  min="1"
+                  onChange={(value) => setTargetValues((current) => ({ ...current, targetSets: value }))}
+                />
+                <TargetInput
+                  label="Rep min"
+                  value={targetValues.repMin}
+                  min="1"
+                  onChange={(value) => setTargetValues((current) => ({ ...current, repMin: value }))}
+                />
+                <TargetInput
+                  label="Rep max"
+                  value={targetValues.repMax}
+                  min="1"
+                  onChange={(value) => setTargetValues((current) => ({ ...current, repMax: value }))}
+                />
+                <TargetInput
+                  label="Target RIR"
+                  value={targetValues.targetRir}
+                  min="0"
+                  max="4"
+                  onChange={(value) => setTargetValues((current) => ({ ...current, targetRir: value }))}
+                />
+              </div>
+              {targetError ? (
+                <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm text-red-200">
+                  {targetError}
+                </div>
+              ) : null}
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <button
+                  type="button"
+                  className="rounded-2xl bg-atlas-accent px-3 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+                  disabled={targetAction !== ''}
+                  onClick={() => {
+                    void handleTargetAction('today');
+                  }}
+                >
+                  {targetAction === 'today' ? 'Saving...' : 'Today only'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-2xl border border-atlas-line bg-atlas-night px-3 py-2.5 text-sm font-medium text-atlas-ink disabled:opacity-60"
+                  disabled={targetAction !== ''}
+                  onClick={() => {
+                    void handleTargetAction('template');
+                  }}
+                >
+                  {targetAction === 'template' ? 'Saving...' : 'Save future'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-2xl border border-atlas-line bg-atlas-night px-3 py-2.5 text-sm font-medium text-atlas-ink disabled:opacity-60"
+                  disabled={targetAction !== ''}
+                  onClick={() => {
+                    void handleTargetAction('defaults');
+                  }}
+                >
+                  {targetAction === 'defaults' ? 'Saving...' : 'Exercise default'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mb-4 rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
               Recent history
@@ -460,6 +672,16 @@ export function ExerciseAccordion({
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-2xl border border-atlas-line bg-atlas-mist px-3 py-2 text-sm text-atlas-ink"
+              onClick={(event) => {
+                event.stopPropagation();
+                setShowNotes(true);
+              }}
+            >
+              Notes
+            </button>
             {exercise.is_overridden && isSessionEditable ? (
               <button
                 type="button"
@@ -567,6 +789,108 @@ export function ExerciseAccordion({
       ) : null}
 
       <BottomSheet
+        open={showNotes}
+        title="Exercise notes"
+        onClose={() => setShowNotes(false)}
+      >
+        <div className="space-y-4">
+          <form className="space-y-3 rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-4" onSubmit={handleCreateNote}>
+            <textarea
+              className="min-h-24 w-full rounded-2xl border border-atlas-line bg-atlas-panel px-4 py-3 text-sm text-atlas-ink"
+              placeholder="Add form cue, setup note, or reminder"
+              value={noteDraft}
+              onChange={(event) => setNoteDraft(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="w-full rounded-2xl bg-atlas-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+              disabled={noteActionId === 'new' || noteDraft.trim() === ''}
+            >
+              {noteActionId === 'new' ? 'Saving...' : 'Add pinned note'}
+            </button>
+          </form>
+
+          {isLoadingExerciseNotes ? (
+            <div className="rounded-2xl border border-atlas-line bg-atlas-mist px-4 py-4 text-sm text-atlas-slate">
+              Loading notes...
+            </div>
+          ) : exerciseNotesError ? (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-4 text-sm text-red-200">
+              {exerciseNotesError}
+            </div>
+          ) : exerciseNotes.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-atlas-line bg-atlas-mist px-4 py-4 text-sm text-atlas-slate">
+              No exercise notes yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {exerciseNotes.map((note) => (
+                <div key={note.id} className="rounded-2xl border border-atlas-line bg-atlas-night px-4 py-4">
+                  <textarea
+                    className="min-h-20 w-full rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-3 text-sm text-atlas-ink"
+                    value={editingNoteById[note.id] ?? note.body}
+                    onChange={(event) =>
+                      setEditingNoteById((current) => ({
+                        ...current,
+                        [note.id]: event.target.value,
+                      }))
+                    }
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-2xl bg-atlas-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
+                      disabled={noteActionId === note.id}
+                      onClick={() => {
+                        setNoteActionId(note.id);
+                        onUpdateExerciseNote(note.id, {
+                          body: editingNoteById[note.id] ?? note.body,
+                        }).finally(() => setNoteActionId(null));
+                      }}
+                    >
+                      Save
+                    </button>
+                    {!note.is_pinned ? (
+                      <button
+                        type="button"
+                        className="rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-2 text-sm text-atlas-ink"
+                        disabled={noteActionId === note.id}
+                        onClick={() => {
+                          setNoteActionId(note.id);
+                          onUpdateExerciseNote(note.id, { is_pinned: true })
+                            .finally(() => setNoteActionId(null));
+                        }}
+                      >
+                        Pin
+                      </button>
+                    ) : (
+                      <span className="rounded-2xl border border-atlas-accent/40 bg-atlas-accentSoft/40 px-3 py-2 text-sm text-blue-100">
+                        Pinned
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+                      disabled={noteActionId === note.id}
+                      onClick={() => {
+                        const confirmed = window.confirm('Delete this exercise note?');
+                        if (confirmed) {
+                          setNoteActionId(note.id);
+                          onDeleteExerciseNote(note.id).finally(() => setNoteActionId(null));
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
         open={showAlternates}
         title="Choose alternate"
         onClose={() => setShowAlternates(false)}
@@ -575,28 +899,61 @@ export function ExerciseAccordion({
           {exercise.alternates.length > 0 ? (
             <div className="space-y-2">
               {exercise.alternates.map((alternate) => (
-                <button
+                <article
                   key={alternate.id}
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-2xl border border-atlas-line bg-atlas-night px-4 py-3 text-left"
-                  onClick={() => {
-                    void handleSelectAlternate(alternate.id).catch(() => {});
-                  }}
+                  className="rounded-2xl border border-atlas-line bg-atlas-night px-4 py-3"
                 >
-                  <div>
-                    <div className="text-sm font-medium text-atlas-ink">
-                      {formatExerciseName(alternate.exercise_name)}
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-atlas-ink">
+                        {formatExerciseName(alternate.exercise_name)}
+                      </div>
+                      <div className="mt-1 text-xs text-atlas-slate">
+                        {alternate.muscle_group || 'Alternate'}
+                      </div>
+                      <div className="mt-2 text-xs text-blue-100">
+                        {formatAlternateTarget(alternate, exercise)}
+                      </div>
                     </div>
-                    <div className="mt-1 text-xs text-atlas-slate">
-                      {alternate.muscle_group || 'Alternate'}
-                    </div>
+                    {pendingSwapId === alternate.id ? (
+                      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100">
+                        Saving
+                      </span>
+                    ) : null}
                   </div>
-                  {pendingSwapId === alternate.id ? (
-                    <span className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100">
-                      Saving
-                    </span>
-                  ) : null}
-                </button>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-2xl bg-atlas-accent px-3 py-2 text-sm font-medium text-white"
+                      onClick={() => {
+                        void handleSelectAlternate(alternate.id).catch(() => {});
+                      }}
+                    >
+                      Use
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-2 text-sm text-atlas-ink"
+                      onClick={() => {
+                        void handleUpdateAlternateTargets(alternate);
+                      }}
+                    >
+                      Match current
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+                      onClick={() => {
+                        const confirmed = window.confirm(`Remove ${formatExerciseName(alternate.exercise_name)} as an alternate?`);
+                        if (confirmed) {
+                          void onDeleteAlternate(alternate.id, exercise.template_exercise_id).catch(() => {});
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
               ))}
             </div>
           ) : (
@@ -631,6 +988,7 @@ export function ExerciseAccordion({
                   onClick={() => {
                     void onCreateAlternate(exercise.template_exercise_id, {
                       exercise_id: catalogExercise.id,
+                      ...toAlternatePayload(alternateTargetValues),
                     }).catch(() => {});
                   }}
                 >
@@ -671,6 +1029,33 @@ export function ExerciseAccordion({
               value={alternateMuscleGroup}
               onChange={(event) => setAlternateMuscleGroup(event.target.value)}
             />
+            <div className="grid grid-cols-2 gap-2">
+              <TargetInput
+                label="Sets"
+                value={alternateTargetValues.targetSets}
+                min="1"
+                onChange={(value) => setAlternateTargetValues((current) => ({ ...current, targetSets: value }))}
+              />
+              <TargetInput
+                label="Rep min"
+                value={alternateTargetValues.repMin}
+                min="1"
+                onChange={(value) => setAlternateTargetValues((current) => ({ ...current, repMin: value }))}
+              />
+              <TargetInput
+                label="Rep max"
+                value={alternateTargetValues.repMax}
+                min="1"
+                onChange={(value) => setAlternateTargetValues((current) => ({ ...current, repMax: value }))}
+              />
+              <TargetInput
+                label="Target RIR"
+                value={alternateTargetValues.targetRir}
+                min="0"
+                max="4"
+                onChange={(value) => setAlternateTargetValues((current) => ({ ...current, targetRir: value }))}
+              />
+            </div>
             {alternateError ? (
               <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-3 text-sm text-red-200">
                 {alternateError}
@@ -688,6 +1073,99 @@ export function ExerciseAccordion({
       </BottomSheet>
     </article>
   );
+}
+
+function TargetInput({ label, value, min, max, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-atlas-slate">
+        {label}
+      </span>
+      <input
+        className="w-full rounded-2xl border border-atlas-line bg-atlas-panel px-3 py-3 text-sm text-atlas-ink"
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function buildTargetFormValues(exercise) {
+  return {
+    targetSets: String(exercise.target_sets ?? 1),
+    repMin: exercise.rep_min === null || exercise.rep_min === undefined ? '' : String(exercise.rep_min),
+    repMax: exercise.rep_max === null || exercise.rep_max === undefined ? '' : String(exercise.rep_max),
+    targetRir: exercise.target_rir === null || exercise.target_rir === undefined ? '' : String(exercise.target_rir),
+  };
+}
+
+function normalizeTargetValues(values) {
+  const targetSets = Number(values.targetSets);
+  const repMin = values.repMin === '' ? null : Number(values.repMin);
+  const repMax = values.repMax === '' ? null : Number(values.repMax);
+  const targetRir = values.targetRir === '' ? null : Number(values.targetRir);
+
+  if (!Number.isInteger(targetSets) || targetSets <= 0) {
+    return { error: 'Sets must be a positive whole number.' };
+  }
+
+  if ((repMin === null) !== (repMax === null)) {
+    return { error: 'Rep min and rep max must both be set or both be blank.' };
+  }
+
+  if (repMin !== null && (!Number.isInteger(repMin) || !Number.isInteger(repMax) || repMin <= 0 || repMax <= 0)) {
+    return { error: 'Rep range must use positive whole numbers.' };
+  }
+
+  if (repMin !== null && repMin > repMax) {
+    return { error: 'Rep min cannot be greater than rep max.' };
+  }
+
+  if (targetRir !== null && (!Number.isInteger(targetRir) || targetRir < 0 || targetRir > 4)) {
+    return { error: 'Target RIR must be between 0 and 4.' };
+  }
+
+  return {
+    targets: {
+      targetSets,
+      repMin,
+      repMax,
+      targetRir,
+    },
+  };
+}
+
+function toAlternatePayload(values) {
+  const normalizedTargets = normalizeTargetValues(values);
+
+  if (normalizedTargets.error) {
+    return {};
+  }
+
+  return {
+    target_sets: normalizedTargets.targets.targetSets,
+    rep_min: normalizedTargets.targets.repMin,
+    rep_max: normalizedTargets.targets.repMax,
+    target_rir: normalizedTargets.targets.targetRir,
+  };
+}
+
+function formatAlternateTarget(alternate, baseExercise) {
+  const targetSets = alternate.target_sets ?? baseExercise.target_sets;
+  const repMin = alternate.rep_min ?? baseExercise.rep_min;
+  const repMax = alternate.rep_max ?? baseExercise.rep_max;
+  const targetRir = alternate.target_rir ?? baseExercise.target_rir;
+  const rirLabel = targetRir === null || targetRir === undefined ? '' : ` @ RIR ${targetRir}`;
+
+  if (repMin === null || repMin === undefined || repMax === null || repMax === undefined) {
+    return `${targetSets || 1} sets x AMRAP${rirLabel}`;
+  }
+
+  return `${targetSets || 1} sets x ${repMin}-${repMax}${rirLabel}`;
 }
 
 function isRowComplete(row) {

@@ -38,7 +38,15 @@ async function listWorkoutTemplates() {
       target_sets: Number(row.target_sets || 1),
       rep_min: row.rep_min === null ? null : Number(row.rep_min),
       rep_max: row.rep_max === null ? null : Number(row.rep_max),
+      target_rir: row.target_rir === null ? null : Number(row.target_rir),
       notes: row.notes || '',
+      pinned_note: row.pinned_note_id === null || row.pinned_note_id === undefined
+        ? null
+        : {
+            id: Number(row.pinned_note_id),
+            body: row.pinned_note_body,
+            updated_at: row.pinned_note_updated_at,
+          },
       alternates: row.alternates || [],
     });
     exercisesByTemplateId.set(row.template_id, currentExercises);
@@ -67,7 +75,14 @@ async function listExerciseCatalog({ search = '', limit = 50 } = {}) {
 
   const result = await pool.query(
     `
-      SELECT ex.id, ex.name, ex.muscle_group
+      SELECT
+        ex.id,
+        ex.name,
+        ex.muscle_group,
+        ex.default_target_sets,
+        ex.default_rep_min,
+        ex.default_rep_max,
+        ex.default_target_rir
       FROM exercises ex
       ${whereClause}
       ORDER BY ex.name ASC
@@ -136,7 +151,7 @@ async function renameExercise(exerciseId, { name, muscleGroup = undefined }) {
           muscle_group = COALESCE($3, muscle_group),
           updated_at = NOW()
         WHERE id = $1
-        RETURNING id, name, muscle_group
+        RETURNING id, name, muscle_group, default_target_sets, default_rep_min, default_rep_max, default_target_rir
       `,
       [exerciseId, normalizedName, muscleGroup === undefined ? null : muscleGroup],
     );
@@ -174,6 +189,219 @@ async function renameExercise(exerciseId, { name, muscleGroup = undefined }) {
 
     await client.query('COMMIT');
     return mapExerciseRecord(updatedExercise);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateExerciseDefaults(exerciseId, { targetSets, repMin, repMax, targetRir }) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      UPDATE exercises
+      SET
+        default_target_sets = $2,
+        default_rep_min = $3,
+        default_rep_max = $4,
+        default_target_rir = $5,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, name, muscle_group, default_target_sets, default_rep_min, default_rep_max, default_target_rir
+    `,
+    [exerciseId, targetSets, repMin, repMax, targetRir],
+  );
+
+  return result.rows[0] ? mapExerciseRecord(result.rows[0]) : null;
+}
+
+async function listExerciseNotes(exerciseId) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      SELECT id, exercise_id, body, is_pinned, created_at, updated_at
+      FROM exercise_notes
+      WHERE exercise_id = $1
+      ORDER BY is_pinned DESC, updated_at DESC, id DESC
+    `,
+    [exerciseId],
+  );
+
+  return result.rows.map(mapExerciseNoteRecord);
+}
+
+async function createExerciseNote(exerciseId, { body, pin = true }) {
+  await ensureGymSchema();
+  const normalizedBody = String(body || '').trim();
+
+  if (!normalizedBody) {
+    const error = new Error('note body is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await assertExerciseExists(client, exerciseId);
+
+    if (pin) {
+      await client.query(
+        `
+          UPDATE exercise_notes
+          SET is_pinned = FALSE, updated_at = NOW()
+          WHERE exercise_id = $1
+            AND is_pinned = TRUE
+        `,
+        [exerciseId],
+      );
+    }
+
+    const result = await client.query(
+      `
+        INSERT INTO exercise_notes (exercise_id, body, is_pinned, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        RETURNING id, exercise_id, body, is_pinned, created_at, updated_at
+      `,
+      [exerciseId, normalizedBody, pin],
+    );
+
+    await client.query('COMMIT');
+    return mapExerciseNoteRecord(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateExerciseNote(exerciseId, noteId, { body, isPinned = undefined }) {
+  await ensureGymSchema();
+  const normalizedBody = body === undefined ? undefined : String(body || '').trim();
+
+  if (body !== undefined && !normalizedBody) {
+    const error = new Error('note body is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const existingResult = await client.query(
+      `
+        SELECT id, body, is_pinned
+        FROM exercise_notes
+        WHERE id = $1
+          AND exercise_id = $2
+        FOR UPDATE
+      `,
+      [noteId, exerciseId],
+    );
+
+    if (existingResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    if (isPinned === true) {
+      await client.query(
+        `
+          UPDATE exercise_notes
+          SET is_pinned = FALSE, updated_at = NOW()
+          WHERE exercise_id = $1
+            AND id <> $2
+            AND is_pinned = TRUE
+        `,
+        [exerciseId, noteId],
+      );
+    }
+
+    const result = await client.query(
+      `
+        UPDATE exercise_notes
+        SET
+          body = COALESCE($3, body),
+          is_pinned = COALESCE($4, is_pinned),
+          updated_at = NOW()
+        WHERE id = $1
+          AND exercise_id = $2
+        RETURNING id, exercise_id, body, is_pinned, created_at, updated_at
+      `,
+      [
+        noteId,
+        exerciseId,
+        normalizedBody === undefined ? null : normalizedBody,
+        isPinned === undefined ? null : isPinned,
+      ],
+    );
+
+    await client.query('COMMIT');
+    return mapExerciseNoteRecord(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteExerciseNote(exerciseId, noteId) {
+  await ensureGymSchema();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const deletedResult = await client.query(
+      `
+        DELETE FROM exercise_notes
+        WHERE id = $1
+          AND exercise_id = $2
+        RETURNING id, is_pinned
+      `,
+      [noteId, exerciseId],
+    );
+
+    if (deletedResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    if (deletedResult.rows[0].is_pinned) {
+      const replacementResult = await client.query(
+        `
+          SELECT id
+          FROM exercise_notes
+          WHERE exercise_id = $1
+          ORDER BY updated_at DESC, id DESC
+          LIMIT 1
+        `,
+        [exerciseId],
+      );
+
+      if (replacementResult.rowCount > 0) {
+        await client.query(
+          `
+            UPDATE exercise_notes
+            SET is_pinned = TRUE, updated_at = NOW()
+            WHERE id = $1
+          `,
+          [replacementResult.rows[0].id],
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    return { id: Number(deletedResult.rows[0].id) };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -291,27 +519,36 @@ async function reorderTemplateExercises(templateId, exercises) {
   return templates.find((item) => item.id === templateId) || null;
 }
 
-async function updateTemplateSet(templateSetId, { targetSets, repMin, repMax }) {
+async function updateTemplateSet(templateSetId, { targetSets, repMin, repMax, targetRir }) {
   await ensureGymSchema();
 
   const result = await pool.query(
     `
       UPDATE template_sets
-      SET target_sets = $2, rep_min = $3, rep_max = $4
+      SET target_sets = $2, rep_min = $3, rep_max = $4, target_rir = $5
       WHERE id = $1
-      RETURNING id, template_exercise_id, target_sets, rep_min, rep_max, notes
+      RETURNING id, template_exercise_id, target_sets, rep_min, rep_max, target_rir, notes
     `,
-    [templateSetId, targetSets, repMin, repMax],
+    [templateSetId, targetSets, repMin, repMax, targetRir],
   );
 
   return result.rows[0] || null;
 }
 
-async function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) {
+async function addExerciseToTemplate({
+  templateId,
+  exerciseId = null,
+  exerciseName,
+  muscleGroup,
+  targetSets = null,
+  repMin = null,
+  repMax = null,
+  targetRir = null,
+}) {
   await ensureGymSchema();
   const normalizedExerciseName = String(exerciseName || '').trim();
 
-  if (!normalizedExerciseName) {
+  if (!exerciseId && !normalizedExerciseName) {
     const error = new Error('Exercise name is required');
     error.statusCode = 400;
     throw error;
@@ -322,10 +559,38 @@ async function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) 
   try {
     await client.query('BEGIN');
 
-    const exerciseRecord = await ensureExerciseRecord(client, {
-      name: normalizedExerciseName,
-      muscleGroup: muscleGroup || null,
-    });
+    let exerciseRecord = null;
+
+    if (exerciseId) {
+      const exerciseResult = await client.query(
+        `
+          SELECT
+            id,
+            name,
+            muscle_group,
+            default_target_sets,
+            default_rep_min,
+            default_rep_max,
+            default_target_rir
+          FROM exercises
+          WHERE id = $1
+        `,
+        [exerciseId],
+      );
+
+      if (exerciseResult.rowCount === 0) {
+        const error = new Error('Exercise not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      exerciseRecord = mapExerciseRecord(exerciseResult.rows[0]);
+    } else {
+      exerciseRecord = await ensureExerciseRecord(client, {
+        name: normalizedExerciseName,
+        muscleGroup: muscleGroup || null,
+      });
+    }
 
     const existingExerciseResult = await client.query(
       `
@@ -339,6 +604,8 @@ async function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) 
     );
 
     if (existingExerciseResult.rowCount > 0) {
+      const existingTemplateExerciseId = Number(existingExerciseResult.rows[0].id);
+
       if (!existingExerciseResult.rows[0].is_active) {
         await client.query(
           `
@@ -346,14 +613,36 @@ async function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) 
             SET is_active = TRUE, updated_at = NOW()
             WHERE id = $1
           `,
-          [existingExerciseResult.rows[0].id],
+          [existingTemplateExerciseId],
+        );
+      }
+
+      if (targetSets || repMin !== null || repMax !== null || targetRir !== null) {
+        await client.query(
+          `
+            INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, target_rir, notes)
+            VALUES ($1, $2, $3, $4, $5, NULL)
+            ON CONFLICT (template_exercise_id)
+            DO UPDATE SET
+              target_sets = EXCLUDED.target_sets,
+              rep_min = EXCLUDED.rep_min,
+              rep_max = EXCLUDED.rep_max,
+              target_rir = EXCLUDED.target_rir
+          `,
+          [
+            existingTemplateExerciseId,
+            targetSets || exerciseRecord.default_target_sets || 3,
+            repMin ?? exerciseRecord.default_rep_min ?? 8,
+            repMax ?? exerciseRecord.default_rep_max ?? 12,
+            targetRir ?? exerciseRecord.default_target_rir ?? null,
+          ],
         );
       }
 
       await client.query('COMMIT');
       const exercises = await getTemplateExercises(templateId);
       return exercises.find(
-        (exercise) => exercise.template_exercise_id === Number(existingExerciseResult.rows[0].id),
+        (exercise) => exercise.template_exercise_id === existingTemplateExerciseId,
       ) || null;
     }
 
@@ -391,15 +680,21 @@ async function addExerciseToTemplate({ templateId, exerciseName, muscleGroup }) 
 
     await client.query(
       `
-        INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, notes)
-        SELECT $1, 3, 8, 12, NULL
+        INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, target_rir, notes)
+        SELECT $1, $2, $3, $4, $5, NULL
         WHERE NOT EXISTS (
           SELECT 1
           FROM template_sets
           WHERE template_exercise_id = $1
         )
       `,
-      [exerciseResult.rows[0].id],
+      [
+        exerciseResult.rows[0].id,
+        targetSets || exerciseRecord.default_target_sets || 3,
+        repMin ?? exerciseRecord.default_rep_min ?? 8,
+        repMax ?? exerciseRecord.default_rep_max ?? 12,
+        targetRir ?? exerciseRecord.default_target_rir ?? null,
+      ],
     );
 
     await client.query('COMMIT');
@@ -475,10 +770,52 @@ async function createTemplateExerciseAlternate(templateExerciseId, payload) {
     if (existingAlternateResult.rowCount === 0) {
       await client.query(
         `
-          INSERT INTO template_exercise_alternates (template_exercise_id, exercise_id, updated_at)
-          VALUES ($1, $2, NOW())
+        INSERT INTO template_exercise_alternates (
+          template_exercise_id,
+          exercise_id,
+          target_sets,
+          rep_min,
+          rep_max,
+          target_rir,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `,
+        [
+          templateExerciseId,
+          exerciseRecord.id,
+          payload.targetSets ?? null,
+          payload.repMin ?? null,
+          payload.repMax ?? null,
+          payload.targetRir ?? null,
+        ],
+      );
+    } else if (
+      payload.targetSets !== undefined
+      || payload.repMin !== undefined
+      || payload.repMax !== undefined
+      || payload.targetRir !== undefined
+    ) {
+      await client.query(
+        `
+          UPDATE template_exercise_alternates
+          SET
+            target_sets = $3,
+            rep_min = $4,
+            rep_max = $5,
+            target_rir = $6,
+            updated_at = NOW()
+          WHERE template_exercise_id = $1
+            AND exercise_id = $2
         `,
-        [templateExerciseId, exerciseRecord.id],
+        [
+          templateExerciseId,
+          exerciseRecord.id,
+          payload.targetSets ?? null,
+          payload.repMin ?? null,
+          payload.repMax ?? null,
+          payload.targetRir ?? null,
+        ],
       );
     }
 
@@ -490,6 +827,56 @@ async function createTemplateExerciseAlternate(templateExerciseId, payload) {
   } finally {
     client.release();
   }
+}
+
+async function updateTemplateExerciseAlternate(alternateId, payload) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      UPDATE template_exercise_alternates
+      SET
+        target_sets = $2,
+        rep_min = $3,
+        rep_max = $4,
+        target_rir = $5,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING template_exercise_id
+    `,
+    [
+      alternateId,
+      payload.targetSets ?? null,
+      payload.repMin ?? null,
+      payload.repMax ?? null,
+      payload.targetRir ?? null,
+    ],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return getTemplateExerciseAlternates(Number(result.rows[0].template_exercise_id));
+}
+
+async function deleteTemplateExerciseAlternate(alternateId) {
+  await ensureGymSchema();
+
+  const result = await pool.query(
+    `
+      DELETE FROM template_exercise_alternates
+      WHERE id = $1
+      RETURNING template_exercise_id
+    `,
+    [alternateId],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return getTemplateExerciseAlternates(Number(result.rows[0].template_exercise_id));
 }
 
 async function duplicateTemplate(templateId) {
@@ -529,6 +916,7 @@ async function duplicateTemplate(templateId) {
           ts.target_sets,
           ts.rep_min,
           ts.rep_max,
+          ts.target_rir,
           ts.notes
         FROM template_exercises te
         LEFT JOIN template_sets ts ON ts.template_exercise_id = te.id
@@ -563,16 +951,16 @@ async function duplicateTemplate(templateId) {
 
       await client.query(
         `
-          INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, notes)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO template_sets (template_exercise_id, target_sets, rep_min, rep_max, target_rir, notes)
+          VALUES ($1, $2, $3, $4, $5, $6)
         `,
-        [nextTemplateExerciseId, row.target_sets || 1, row.rep_min, row.rep_max, row.notes],
+        [nextTemplateExerciseId, row.target_sets || 1, row.rep_min, row.rep_max, row.target_rir, row.notes],
       );
     }
 
     const alternateRows = await client.query(
       `
-        SELECT template_exercise_id, exercise_id
+        SELECT template_exercise_id, exercise_id, target_sets, rep_min, rep_max, target_rir
         FROM template_exercise_alternates
         WHERE template_exercise_id = ANY($1::int[])
       `,
@@ -588,11 +976,26 @@ async function duplicateTemplate(templateId) {
 
       await client.query(
         `
-          INSERT INTO template_exercise_alternates (template_exercise_id, exercise_id, updated_at)
-          VALUES ($1, $2, NOW())
+          INSERT INTO template_exercise_alternates (
+            template_exercise_id,
+            exercise_id,
+            target_sets,
+            rep_min,
+            rep_max,
+            target_rir,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
           ON CONFLICT (template_exercise_id, exercise_id) DO NOTHING
         `,
-        [nextTemplateExerciseId, row.exercise_id],
+        [
+          nextTemplateExerciseId,
+          row.exercise_id,
+          row.target_sets,
+          row.rep_min,
+          row.rep_max,
+          row.target_rir,
+        ],
       );
     }
 
@@ -608,16 +1011,51 @@ async function duplicateTemplate(templateId) {
   return templates.find((template) => template.id === copiedTemplateId) || null;
 }
 
+function mapExerciseNoteRecord(row) {
+  return {
+    id: Number(row.id),
+    exercise_id: Number(row.exercise_id),
+    body: row.body,
+    is_pinned: row.is_pinned === true,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+async function assertExerciseExists(client, exerciseId) {
+  const result = await client.query(
+    `
+      SELECT id
+      FROM exercises
+      WHERE id = $1
+    `,
+    [exerciseId],
+  );
+
+  if (result.rowCount === 0) {
+    const error = new Error('Exercise not found');
+    error.statusCode = 404;
+    throw error;
+  }
+}
+
 module.exports = {
   listWorkoutTemplates,
   listExerciseCatalog,
   updateTemplateName,
   renameExercise,
+  updateExerciseDefaults,
+  listExerciseNotes,
+  createExerciseNote,
+  updateExerciseNote,
+  deleteExerciseNote,
   toggleTemplateExercise,
   reorderTemplateExercises,
   updateTemplateSet,
   addExerciseToTemplate,
   getTemplateExerciseAlternates,
   createTemplateExerciseAlternate,
+  updateTemplateExerciseAlternate,
+  deleteTemplateExerciseAlternate,
   duplicateTemplate,
 };

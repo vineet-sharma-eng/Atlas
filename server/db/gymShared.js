@@ -50,6 +50,18 @@ function mapExerciseRecord(row) {
     id: Number(row.id),
     name: row.name,
     muscle_group: row.muscle_group,
+    default_target_sets: row.default_target_sets === null || row.default_target_sets === undefined
+      ? null
+      : Number(row.default_target_sets),
+    default_rep_min: row.default_rep_min === null || row.default_rep_min === undefined
+      ? null
+      : Number(row.default_rep_min),
+    default_rep_max: row.default_rep_max === null || row.default_rep_max === undefined
+      ? null
+      : Number(row.default_rep_max),
+    default_target_rir: row.default_target_rir === null || row.default_target_rir === undefined
+      ? null
+      : Number(row.default_target_rir),
   };
 }
 
@@ -74,6 +86,7 @@ async function ensureExerciseRecord(client, { name, muscleGroup = null }) {
   const existingResult = await client.query(
     `
       SELECT id, name, muscle_group
+        , default_target_sets, default_rep_min, default_rep_max, default_target_rir
       FROM exercises
       WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
       LIMIT 1
@@ -90,7 +103,7 @@ async function ensureExerciseRecord(client, { name, muscleGroup = null }) {
           UPDATE exercises
           SET muscle_group = $2, updated_at = NOW()
           WHERE id = $1
-          RETURNING id, name, muscle_group
+          RETURNING id, name, muscle_group, default_target_sets, default_rep_min, default_rep_max, default_target_rir
         `,
         [existingExercise.id, muscleGroup],
       );
@@ -105,7 +118,7 @@ async function ensureExerciseRecord(client, { name, muscleGroup = null }) {
     `
       INSERT INTO exercises (name, muscle_group, updated_at)
       VALUES ($1, $2, NOW())
-      RETURNING id, name, muscle_group
+      RETURNING id, name, muscle_group, default_target_sets, default_rep_min, default_rep_max, default_target_rir
     `,
     [normalizedName, muscleGroup || null],
   );
@@ -142,7 +155,11 @@ async function getTemplateExerciseAlternatesMap(templateExerciseIds) {
         tea.template_exercise_id,
         tea.exercise_id,
         ex.name AS exercise_name,
-        ex.muscle_group
+        ex.muscle_group,
+        tea.target_sets,
+        tea.rep_min,
+        tea.rep_max,
+        tea.target_rir
       FROM template_exercise_alternates tea
       JOIN exercises ex ON ex.id = tea.exercise_id
       WHERE tea.template_exercise_id = ANY($1::int[])
@@ -162,6 +179,10 @@ async function getTemplateExerciseAlternatesMap(templateExerciseIds) {
       exercise_id: Number(row.exercise_id),
       exercise_name: row.exercise_name,
       muscle_group: row.muscle_group,
+      target_sets: row.target_sets === null ? null : Number(row.target_sets),
+      rep_min: row.rep_min === null ? null : Number(row.rep_min),
+      rep_max: row.rep_max === null ? null : Number(row.rep_max),
+      target_rir: row.target_rir === null ? null : Number(row.target_rir),
     });
     alternatesByTemplateExerciseId.set(key, currentAlternates);
   }
@@ -203,10 +224,17 @@ async function getTemplateExerciseRows({ templateId = null, includeInactive = fa
         COALESCE(MAX(ts.target_sets), 1)::int AS target_sets,
         MIN(ts.rep_min)::int AS rep_min,
         MAX(ts.rep_max)::int AS rep_max,
-        COALESCE(MAX(NULLIF(TRIM(ts.notes), '')), '') AS notes
+        MAX(ts.target_rir)::int AS target_rir,
+        COALESCE(MAX(NULLIF(TRIM(ts.notes), '')), '') AS notes,
+        pinned_note.id AS pinned_note_id,
+        pinned_note.body AS pinned_note_body,
+        pinned_note.updated_at AS pinned_note_updated_at
       FROM template_exercises te
       LEFT JOIN exercises ex ON ex.id = te.exercise_id
       LEFT JOIN template_sets ts ON ts.template_exercise_id = te.id
+      LEFT JOIN exercise_notes pinned_note
+        ON pinned_note.exercise_id = te.exercise_id
+       AND pinned_note.is_pinned = TRUE
       ${whereClause}
       GROUP BY
         te.id,
@@ -218,7 +246,10 @@ async function getTemplateExerciseRows({ templateId = null, includeInactive = fa
         te.muscle_group,
         te.order_index,
         te.is_active,
-        ts.id
+        ts.id,
+        pinned_note.id,
+        pinned_note.body,
+        pinned_note.updated_at
       ORDER BY te.template_id ASC, te.order_index ASC, te.id ASC
     `,
     params,
@@ -249,7 +280,15 @@ function mapTemplateExerciseRow(row) {
     target_sets: Number(row.target_sets || 1),
     rep_min: row.rep_min === null ? null : Number(row.rep_min),
     rep_max: row.rep_max === null ? null : Number(row.rep_max),
+    target_rir: row.target_rir === null || row.target_rir === undefined ? null : Number(row.target_rir),
     notes: row.notes || '',
+    pinned_note: row.pinned_note_id === null || row.pinned_note_id === undefined
+      ? null
+      : {
+          id: Number(row.pinned_note_id),
+          body: row.pinned_note_body,
+          updated_at: row.pinned_note_updated_at,
+        },
     alternates: Array.isArray(row.alternates) ? row.alternates : [],
   };
 }
@@ -345,11 +384,21 @@ async function getSessionExercises(sessionId) {
         override_ex.name AS override_exercise_name,
         COALESCE(override_ex.id, base_ex.id, ge.exercise_id) AS effective_exercise_id,
         COALESCE(override_ex.name, base_ex.name, ge.exercise_name) AS effective_exercise_name,
+        ge.target_sets,
+        ge.rep_min,
+        ge.rep_max,
+        ge.target_rir,
+        pinned_note.id AS pinned_note_id,
+        pinned_note.body AS pinned_note_body,
+        pinned_note.updated_at AS pinned_note_updated_at,
         ge.updated_at
       FROM gym_exercises ge
       LEFT JOIN exercises base_ex ON base_ex.id = ge.exercise_id
       LEFT JOIN template_exercise_alternates override_alt ON override_alt.id = ge.override_alternate_id
       LEFT JOIN exercises override_ex ON override_ex.id = override_alt.exercise_id
+      LEFT JOIN exercise_notes pinned_note
+        ON pinned_note.exercise_id = COALESCE(override_ex.id, base_ex.id, ge.exercise_id)
+       AND pinned_note.is_pinned = TRUE
       WHERE ge.session_id = $1
       ORDER BY ge.order_index ASC, ge.id ASC
     `,
@@ -416,6 +465,17 @@ async function getSessionExercises(sessionId) {
     exercise_name: row.effective_exercise_name,
     muscle_group: row.muscle_group,
     order_index: Number(row.order_index),
+    target_sets: Number(row.target_sets || 1),
+    rep_min: row.rep_min === null ? null : Number(row.rep_min),
+    rep_max: row.rep_max === null ? null : Number(row.rep_max),
+    target_rir: row.target_rir === null ? null : Number(row.target_rir),
+    pinned_note: row.pinned_note_id === null
+      ? null
+      : {
+          id: Number(row.pinned_note_id),
+          body: row.pinned_note_body,
+          updated_at: row.pinned_note_updated_at,
+        },
     status: row.status,
     updated_at: row.updated_at,
     is_overridden: row.override_alternate_id !== null,
